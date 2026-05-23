@@ -39,8 +39,10 @@ export interface Movement {
   workerId?: string;
   description?: string;
   status: MovementStatus;  // pending counts only when confirmed
-  // For courier flow we link delivery movements to base
-  group?: string;          // groups related entries (base + delivery + return)
+  group?: string;
+  kind?: "commission" | "delivery";
+  deliveryId?: string;     // for commissions, links back to delivery
+  deliveryValue?: number;  // for commissions, original delivery value
 }
 
 export interface Arqueo {
@@ -64,6 +66,7 @@ export interface Settings {
   initialCash: number;
   initialBank: number;
   setupComplete: boolean;
+  commissionPercent: number;
 }
 
 export interface AppState {
@@ -92,6 +95,7 @@ function defaultState(): AppState {
       initialCash: 300000,
       initialBank: 103130,
       setupComplete: false,
+      commissionPercent: 0,
     },
     workers: DEFAULT_WORKERS.map((name, i) => ({
       id: uid(),
@@ -102,6 +106,13 @@ function defaultState(): AppState {
     })),
     days: {},
   };
+}
+
+function migrate(s: AppState): AppState {
+  if (typeof s.settings.commissionPercent !== "number") {
+    s.settings.commissionPercent = 0;
+  }
+  return s;
 }
 
 interface Ctx {
