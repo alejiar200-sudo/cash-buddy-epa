@@ -9,8 +9,50 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as TrabajadoresRouteImport } from './routes/trabajadores'
+import { Route as NominaRouteImport } from './routes/nomina'
+import { Route as MovimientosRouteImport } from './routes/movimientos'
+import { Route as HistorialRouteImport } from './routes/historial'
+import { Route as DomiciliariosRouteImport } from './routes/domiciliarios'
+import { Route as ConfiguracionRouteImport } from './routes/configuracion'
+import { Route as ArqueosRouteImport } from './routes/arqueos'
 import { Route as IndexRouteImport } from './routes/index'
 
+const TrabajadoresRoute = TrabajadoresRouteImport.update({
+  id: '/trabajadores',
+  path: '/trabajadores',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NominaRoute = NominaRouteImport.update({
+  id: '/nomina',
+  path: '/nomina',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MovimientosRoute = MovimientosRouteImport.update({
+  id: '/movimientos',
+  path: '/movimientos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HistorialRoute = HistorialRouteImport.update({
+  id: '/historial',
+  path: '/historial',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DomiciliariosRoute = DomiciliariosRouteImport.update({
+  id: '/domiciliarios',
+  path: '/domiciliarios',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConfiguracionRoute = ConfiguracionRouteImport.update({
+  id: '/configuracion',
+  path: '/configuracion',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ArqueosRoute = ArqueosRouteImport.update({
+  id: '/arqueos',
+  path: '/arqueos',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -19,28 +61,130 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/arqueos': typeof ArqueosRoute
+  '/configuracion': typeof ConfiguracionRoute
+  '/domiciliarios': typeof DomiciliariosRoute
+  '/historial': typeof HistorialRoute
+  '/movimientos': typeof MovimientosRoute
+  '/nomina': typeof NominaRoute
+  '/trabajadores': typeof TrabajadoresRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/arqueos': typeof ArqueosRoute
+  '/configuracion': typeof ConfiguracionRoute
+  '/domiciliarios': typeof DomiciliariosRoute
+  '/historial': typeof HistorialRoute
+  '/movimientos': typeof MovimientosRoute
+  '/nomina': typeof NominaRoute
+  '/trabajadores': typeof TrabajadoresRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/arqueos': typeof ArqueosRoute
+  '/configuracion': typeof ConfiguracionRoute
+  '/domiciliarios': typeof DomiciliariosRoute
+  '/historial': typeof HistorialRoute
+  '/movimientos': typeof MovimientosRoute
+  '/nomina': typeof NominaRoute
+  '/trabajadores': typeof TrabajadoresRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/arqueos'
+    | '/configuracion'
+    | '/domiciliarios'
+    | '/historial'
+    | '/movimientos'
+    | '/nomina'
+    | '/trabajadores'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/arqueos'
+    | '/configuracion'
+    | '/domiciliarios'
+    | '/historial'
+    | '/movimientos'
+    | '/nomina'
+    | '/trabajadores'
+  id:
+    | '__root__'
+    | '/'
+    | '/arqueos'
+    | '/configuracion'
+    | '/domiciliarios'
+    | '/historial'
+    | '/movimientos'
+    | '/nomina'
+    | '/trabajadores'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ArqueosRoute: typeof ArqueosRoute
+  ConfiguracionRoute: typeof ConfiguracionRoute
+  DomiciliariosRoute: typeof DomiciliariosRoute
+  HistorialRoute: typeof HistorialRoute
+  MovimientosRoute: typeof MovimientosRoute
+  NominaRoute: typeof NominaRoute
+  TrabajadoresRoute: typeof TrabajadoresRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/trabajadores': {
+      id: '/trabajadores'
+      path: '/trabajadores'
+      fullPath: '/trabajadores'
+      preLoaderRoute: typeof TrabajadoresRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/nomina': {
+      id: '/nomina'
+      path: '/nomina'
+      fullPath: '/nomina'
+      preLoaderRoute: typeof NominaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/movimientos': {
+      id: '/movimientos'
+      path: '/movimientos'
+      fullPath: '/movimientos'
+      preLoaderRoute: typeof MovimientosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/historial': {
+      id: '/historial'
+      path: '/historial'
+      fullPath: '/historial'
+      preLoaderRoute: typeof HistorialRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/domiciliarios': {
+      id: '/domiciliarios'
+      path: '/domiciliarios'
+      fullPath: '/domiciliarios'
+      preLoaderRoute: typeof DomiciliariosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/configuracion': {
+      id: '/configuracion'
+      path: '/configuracion'
+      fullPath: '/configuracion'
+      preLoaderRoute: typeof ConfiguracionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/arqueos': {
+      id: '/arqueos'
+      path: '/arqueos'
+      fullPath: '/arqueos'
+      preLoaderRoute: typeof ArqueosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -53,7 +197,24 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ArqueosRoute: ArqueosRoute,
+  ConfiguracionRoute: ConfiguracionRoute,
+  DomiciliariosRoute: DomiciliariosRoute,
+  HistorialRoute: HistorialRoute,
+  MovimientosRoute: MovimientosRoute,
+  NominaRoute: NominaRoute,
+  TrabajadoresRoute: TrabajadoresRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
