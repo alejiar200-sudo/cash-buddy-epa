@@ -15,14 +15,14 @@ interface Props {
 
 export function GiveBaseWizard({ open, onOpenChange, date, presetWorkerId }: Props) {
   const { state, addMovement, ensureDay } = useStore();
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState(presetWorkerId ? 2 : 1);
   const [workerId, setWorkerId] = useState<string | undefined>(presetWorkerId);
   const [amount, setAmount] = useState(0);
 
   const couriers = state.workers.filter((w) => w.active && w.role === "domiciliario");
   const worker = couriers.find((w) => w.id === workerId);
 
-  function reset() { setStep(1); setWorkerId(presetWorkerId); setAmount(0); }
+  function reset() { setStep(presetWorkerId ? 2 : 1); setWorkerId(presetWorkerId); setAmount(0); }
   function close() { onOpenChange(false); setTimeout(reset, 250); }
 
   function submit() {
@@ -40,10 +40,11 @@ export function GiveBaseWizard({ open, onOpenChange, date, presetWorkerId }: Pro
     <WizardShell
       open={open}
       onOpenChange={(v) => { if (!v) close(); }}
-      step={step}
-      total={2}
-      title={step === 1 ? "¿A quién le vas a dar la base?" : `¿Cuánto efectivo le vas a dar a ${worker?.name}?`}
-      onBack={step === 2 ? () => setStep(1) : undefined}
+      step={presetWorkerId ? 1 : step}
+      total={presetWorkerId ? 1 : 2}
+      title={step === 1 ? "¿A quién le vas a dar la base?" : `Dar base a ${worker?.name?.toUpperCase() ?? ""}`}
+      subtitle={step === 2 ? "¿Cuánto efectivo le vas a entregar?" : undefined}
+      onBack={step === 2 && !presetWorkerId ? () => setStep(1) : undefined}
     >
       {step === 1 && (
         <div className="grid grid-cols-2 gap-2 max-h-80 overflow-auto pr-1">

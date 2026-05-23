@@ -39,8 +39,10 @@ export interface Movement {
   workerId?: string;
   description?: string;
   status: MovementStatus;  // pending counts only when confirmed
-  // For courier flow we link delivery movements to base
-  group?: string;          // groups related entries (base + delivery + return)
+  group?: string;
+  kind?: "commission" | "delivery";
+  deliveryId?: string;     // for commissions, links back to delivery
+  deliveryValue?: number;  // for commissions, original delivery value
 }
 
 export interface Arqueo {
@@ -64,6 +66,7 @@ export interface Settings {
   initialCash: number;
   initialBank: number;
   setupComplete: boolean;
+  commissionPercent: number;
 }
 
 export interface AppState {
@@ -92,6 +95,7 @@ function defaultState(): AppState {
       initialCash: 300000,
       initialBank: 103130,
       setupComplete: false,
+      commissionPercent: 0,
     },
     workers: DEFAULT_WORKERS.map((name, i) => ({
       id: uid(),
@@ -102,6 +106,13 @@ function defaultState(): AppState {
     })),
     days: {},
   };
+}
+
+function migrate(s: AppState): AppState {
+  if (typeof s.settings.commissionPercent !== "number") {
+    s.settings.commissionPercent = 0;
+  }
+  return s;
 }
 
 interface Ctx {
@@ -124,7 +135,7 @@ function load(): AppState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return defaultState();
-    return JSON.parse(raw) as AppState;
+    return migrate(JSON.parse(raw) as AppState);
   } catch {
     return defaultState();
   }
@@ -203,6 +214,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       workerId: m.workerId,
       description: m.description,
       group: m.group,
+      kind: m.kind,
+      deliveryId: m.deliveryId,
+      deliveryValue: m.deliveryValue,
     };
     _setState((s) => {
       const day = s.days[date] ?? { date, initialCash: s.settings.initialCash, initialBank: s.settings.initialBank, movements: [] };
@@ -340,3 +354,74 @@ export const CATEGORY_LABEL: Record<CategoryCode, string> = {
   15: "Nómina efectivo",
   18: "Nómina banco",
 };
+
+// ============ Commission / delivery helpers ============
+
+export interface DeliveryEntry {
+  movement: Movement;
+  value: number;
+  commission: number;
+  received: boolean; // status confirmed
+}
+
+export function deliveriesForDay(day: DayData, workerId: string): DeliveryEntry[] {
+  return day.movements
+    .filter((m) => m.workerId === workerId && m.kind === "delivery")
+    .map((m) => {
+      // find linked commission to get its amount
+      const comm = day.movements.find((c) => c.kind === "commission" && c.deliveryId === m.id);
+      return {
+        movement: m,
+        value: m.amount,
+        commission: comm?.amount ?? 0,
+        received: m.status === "confirmed",
+      };
+    });
+}
+
+export interface CommissionRow {
+  id: string;
+  date: string;
+  deliveryValue: number;
+  commission: number;
+  status: MovementStatus;
+  medium: Medium;
+}
+
+export function commissionsForWorker(state: AppState, workerId: string, monthPrefix?: string): CommissionRow[] {
+  const out: CommissionRow[] = [];
+  for (const date of Object.keys(state.days)) {
+    if (monthPrefix && !date.startsWith(monthPrefix)) continue;
+    for (const m of state.days[date].movements) {
+      if (m.kind === "commission" && m.workerId === workerId) {
+        out.push({
+          id: m.id,
+          date,
+          deliveryValue: m.deliveryValue ?? 0,
+          commission: m.amount,
+          status: m.status,
+          medium: m.medium,
+        });
+      }
+    }
+  }
+  out.sort((a, b) => (a.date < b.date ? 1 : -1));
+  return out;
+}
+
+export function fixedPayrollForWorker(state: AppState, workerId: string, monthPrefix: string) {
+  const payments: { id: string; date: string; amount: number; medium: Medium; status: MovementStatus; concept?: string }[] = [];
+  let pending = 0;
+  let paid = 0;
+  for (const date of Object.keys(state.days)) {
+    if (!date.startsWith(monthPrefix)) continue;
+    for (const m of state.days[date].movements) {
+      if ((m.category === 15 || m.category === 18) && m.workerId === workerId && m.kind !== "commission") {
+        payments.push({ id: m.id, date, amount: m.amount, medium: m.medium, status: m.status, concept: m.description });
+        if (m.status === "confirmed") paid += m.amount;
+        else pending += m.amount;
+      }
+    }
+  }
+  return { payments, pending, paid };
+}
