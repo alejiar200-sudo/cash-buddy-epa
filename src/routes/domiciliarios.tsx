@@ -1,20 +1,23 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
-import { useStore, courierStatusForDay, type Worker } from "@/lib/store";
+import { useStore, courierStatusForDay, deliveriesForDay, type Worker } from "@/lib/store";
 import { useDay } from "@/lib/day-context";
 import { Avatar } from "@/components/Avatar";
 import { formatCOP } from "@/lib/format";
 import { GiveBaseWizard } from "@/components/wizards/GiveBaseWizard";
-import { RegisterDeliveriesWizard } from "@/components/wizards/RegisterDeliveriesWizard";
-import { CourierPaidWizard } from "@/components/wizards/CourierPaidWizard";
-import { Plus, Banknote, Package, CheckCircle2, Pencil, Eye } from "lucide-react";
+import { RegisterDeliveryWizard } from "@/components/wizards/RegisterDeliveryWizard";
+import { ReceiveDeliveryPaymentWizard } from "@/components/wizards/ReceiveDeliveryPaymentWizard";
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
+import { Plus, Package, MoreVertical, Banknote, CheckCircle2, Eye, Pencil, AlertTriangle } from "lucide-react";
 
 export const Route = createFileRoute("/domiciliarios")({ component: CouriersPage });
 
 function CouriersPage() {
   const { state, addWorker } = useStore();
   const { date } = useDay();
-  const couriers = state.workers.filter(w => w.active && w.role === "domiciliario");
+  const couriers = state.workers.filter((w) => w.active && w.role === "domiciliario");
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState("");
 
@@ -28,7 +31,7 @@ function CouriersPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {couriers.map(w => <CourierCard key={w.id} worker={w} date={date} />)}
+        {couriers.map((w) => <CourierCard key={w.id} worker={w} date={date} />)}
       </div>
 
       {adding && (
@@ -36,7 +39,15 @@ function CouriersPage() {
           <div className="glass-strong rounded-3xl p-6 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-xl font-bold mb-3">Nuevo domiciliario</h3>
             <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Nombre" className="w-full glass rounded-xl px-4 py-3 outline-none" />
-            <button onClick={() => { if (newName.trim()) { addWorker({ name: newName.trim(), role: "domiciliario", active: true }); setNewName(""); setAdding(false); } }} className="mt-4 w-full bg-primary text-primary-foreground font-bold py-3 rounded-xl shadow-cash">Agregar</button>
+            <button
+              onClick={() => {
+                if (newName.trim()) {
+                  addWorker({ name: newName.trim(), role: "domiciliario", active: true });
+                  setNewName(""); setAdding(false);
+                }
+              }}
+              className="mt-4 w-full bg-primary text-primary-foreground font-bold py-3 rounded-xl shadow-cash"
+            >Agregar</button>
           </div>
         </div>
       )}
@@ -48,9 +59,12 @@ function CourierCard({ worker, date }: { worker: Worker; date: string }) {
   const { getDay } = useStore();
   const day = getDay(date);
   const s = courierStatusForDay(day, worker.id);
+  const deliveries = deliveriesForDay(day, worker.id);
+
   const [giveBase, setGiveBase] = useState(false);
   const [regDel, setRegDel] = useState(false);
-  const [paid, setPaid] = useState(false);
+  const [receive, setReceive] = useState(false);
+  const [receivePreset, setReceivePreset] = useState<string | undefined>();
 
   const toneCls =
     s.status === "ok" ? "ring-cash shadow-cash"
@@ -64,9 +78,13 @@ function CourierCard({ worker, date }: { worker: Worker; date: string }) {
     idle: { txt: "○ Sin actividad", cls: "text-muted-foreground bg-secondary" },
   }[s.status];
 
-  const totalDeliveries = s.deliveriesCashConfirmed + s.deliveriesCashPending + s.deliveriesBankConfirmed + s.deliveriesBankPending;
-  const progress = s.totalOwed > 0 ? Math.min(100, Math.round((s.totalReturned / s.totalOwed) * 100)) : 0;
-  const hasBase = s.baseGiven > 0;
+  const totalReceived = deliveries.filter((d) => d.received).reduce((sum, d) => sum + d.value, 0);
+  const totalOwed = deliveries.filter((d) => !d.received).reduce((sum, d) => sum + d.value, 0);
+
+  function openReceive(deliveryId?: string) {
+    setReceivePreset(deliveryId);
+    setReceive(true);
+  }
 
   return (
     <div className={`glass-strong rounded-3xl p-5 ${toneCls}`}>
@@ -80,72 +98,108 @@ function CourierCard({ worker, date }: { worker: Worker; date: string }) {
 
       <div className="mt-4 grid grid-cols-3 gap-2 text-center">
         <Stat label="Base" value={s.baseGiven} />
-        <Stat label="Domicilios" value={totalDeliveries} />
-        <Stat label="Total" value={s.totalOwed} accent />
+        <Stat label="Domicilios" value={deliveries.length} raw />
+        <Stat label="Recibido" value={totalReceived} accent />
       </div>
 
-      {s.totalOwed > 0 && (
-        <div className="mt-3">
-          <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
-            <div className="h-full bg-primary transition-all" style={{ width: `${progress}%` }} />
+      {/* Today's deliveries */}
+      {deliveries.length > 0 && (
+        <div className="mt-4">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground mb-1.5">Domicilios de hoy</div>
+          <div className="space-y-1 max-h-40 overflow-auto pr-1">
+            {deliveries.map((d) => (
+              <div
+                key={d.movement.id}
+                className={`flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-sm ${d.received ? "bg-cash-soft" : "bg-danger-soft"}`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="tnum font-bold">{formatCOP(d.value)}</span>
+                  <span className={d.received ? "text-cash text-xs" : "text-danger text-xs"}>
+                    {d.received ? "✅ Recibido" : "⚠️ Debe"}
+                  </span>
+                </div>
+                {!d.received && (
+                  <button
+                    onClick={() => openReceive(d.movement.id)}
+                    className="text-xs font-bold px-2 py-1 rounded-md bg-cash text-background"
+                  >
+                    ✅ Recibir
+                  </button>
+                )}
+              </div>
+            ))}
           </div>
-          <div className="text-xs text-muted-foreground mt-1 text-right tnum">Devuelto: {formatCOP(s.totalReturned)} / {formatCOP(s.totalOwed)}</div>
+          <div className="mt-2 flex items-center justify-between text-xs tnum">
+            <span className="text-muted-foreground">Total recibido</span>
+            <span className="font-bold text-cash">{formatCOP(totalReceived)}</span>
+          </div>
+          {totalOwed > 0 && (
+            <div className="flex items-center justify-between text-xs tnum">
+              <span className="text-muted-foreground">Total que debe</span>
+              <span className="font-bold text-danger">{formatCOP(totalOwed)}</span>
+            </div>
+          )}
         </div>
       )}
 
-      <div className="mt-4 flex flex-wrap gap-2">
-        {!hasBase && (
-          <button onClick={() => setGiveBase(true)} className="flex-1 flex items-center justify-center gap-1.5 bg-primary text-primary-foreground font-bold py-2.5 rounded-xl shadow-cash text-sm">
-            <Banknote className="h-4 w-4" /> Dar base hoy
-          </button>
-        )}
-        {hasBase && totalDeliveries === 0 && (
-          <>
-            <button onClick={() => setRegDel(true)} className="flex-1 flex items-center justify-center gap-1.5 bg-accent text-accent-foreground font-bold py-2.5 rounded-xl shadow-bank text-sm">
-              <Package className="h-4 w-4" /> Registrar domicilios
+      {/* Action row */}
+      <div className="mt-4 flex gap-2">
+        <button
+          onClick={() => setRegDel(true)}
+          className="flex-1 flex items-center justify-center gap-1.5 bg-primary text-primary-foreground font-bold py-2.5 rounded-xl shadow-cash text-sm"
+        >
+          <Package className="h-4 w-4" /> Registrar domicilio
+        </button>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button className="px-3 py-2.5 rounded-xl bg-secondary text-sm font-medium" title="Más opciones">
+              <MoreVertical className="h-4 w-4" />
             </button>
-            <div className="text-xs text-muted-foreground self-center px-2">Base: {formatCOP(s.baseGiven)}</div>
-          </>
-        )}
-        {hasBase && totalDeliveries > 0 && s.status !== "ok" && (
-          <>
-            <button onClick={() => setPaid(true)} className="flex-1 flex items-center justify-center gap-1.5 bg-primary text-primary-foreground font-bold py-2.5 rounded-xl shadow-cash text-sm">
-              <CheckCircle2 className="h-4 w-4" /> Ya me pagó
-            </button>
-            <button onClick={() => setRegDel(true)} className="flex items-center justify-center gap-1 bg-secondary px-3 py-2.5 rounded-xl text-sm font-medium">
-              <Package className="h-4 w-4" /> Más
-            </button>
-          </>
-        )}
-        {s.status === "ok" && (
-          <>
-            <button className="flex-1 flex items-center justify-center gap-1.5 bg-secondary text-foreground font-bold py-2.5 rounded-xl text-sm">
-              <Eye className="h-4 w-4" /> Ver resumen
-            </button>
-            <button onClick={() => setRegDel(true)} className="flex items-center justify-center gap-1 bg-secondary px-3 py-2.5 rounded-xl text-sm font-medium">
-              <Package className="h-4 w-4" /> Más
-            </button>
-          </>
-        )}
-        {hasBase && (
-          <button title="Editar base" className="px-3 py-2.5 rounded-xl bg-secondary text-sm">
-            <Pencil className="h-4 w-4" />
-          </button>
-        )}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="bg-card border-border">
+            <DropdownMenuItem onClick={() => setGiveBase(true)} className="gap-2">
+              <Banknote className="h-4 w-4" /> 💵 Dar base
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => openReceive(undefined)} disabled={totalOwed === 0} className="gap-2">
+              <CheckCircle2 className="h-4 w-4" /> ✅ Recibir pago domicilio
+            </DropdownMenuItem>
+            <DropdownMenuItem className="gap-2" disabled>
+              <Eye className="h-4 w-4" /> 💼 Ver historial
+            </DropdownMenuItem>
+            <DropdownMenuItem className="gap-2" disabled>
+              <Pencil className="h-4 w-4" /> ✏️ Editar trabajador
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
+      {s.baseGiven === 0 && (
+        <div className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <AlertTriangle className="h-3 w-3" /> Aún no le has dado base hoy
+        </div>
+      )}
+
       <GiveBaseWizard open={giveBase} onOpenChange={setGiveBase} date={date} presetWorkerId={worker.id} />
-      <RegisterDeliveriesWizard open={regDel} onOpenChange={setRegDel} date={date} workerId={worker.id} />
-      <CourierPaidWizard open={paid} onOpenChange={setPaid} date={date} workerId={worker.id} />
+      <RegisterDeliveryWizard open={regDel} onOpenChange={setRegDel} date={date} workerId={worker.id} />
+      <ReceiveDeliveryPaymentWizard
+        open={receive}
+        onOpenChange={(v) => { setReceive(v); if (!v) setReceivePreset(undefined); }}
+        date={date}
+        workerId={worker.id}
+        presetDeliveryId={receivePreset}
+      />
     </div>
   );
 }
 
-function Stat({ label, value, accent }: { label: string; value: number; accent?: boolean }) {
+function Stat({ label, value, accent, raw }: { label: string; value: number; accent?: boolean; raw?: boolean }) {
   return (
     <div className="glass rounded-xl py-2">
       <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
-      <div className={`tnum text-sm font-bold ${accent ? "text-cash" : ""}`}>{formatCOP(value)}</div>
+      <div className={`tnum text-sm font-bold ${accent ? "text-cash" : ""}`}>
+        {raw ? value : formatCOP(value)}
+      </div>
     </div>
   );
 }
