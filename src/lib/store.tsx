@@ -214,6 +214,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       workerId: m.workerId,
       description: m.description,
       group: m.group,
+      kind: m.kind,
+      deliveryId: m.deliveryId,
+      deliveryValue: m.deliveryValue,
     };
     _setState((s) => {
       const day = s.days[date] ?? { date, initialCash: s.settings.initialCash, initialBank: s.settings.initialBank, movements: [] };
