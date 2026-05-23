@@ -135,7 +135,7 @@ function load(): AppState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return defaultState();
-    return JSON.parse(raw) as AppState;
+    return migrate(JSON.parse(raw) as AppState);
   } catch {
     return defaultState();
   }
