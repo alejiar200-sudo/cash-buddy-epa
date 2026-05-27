@@ -3,30 +3,36 @@ logs
 *.log
 npm-debug.log*
 yarn-debug.log*
-yarn-error.log*
 pnpm-debug.log*
-lerna-debug.log*
 
+# Dependencies
 node_modules
+
+# Build outputs
 dist
-dist-ssr
+build
+out
+.next
 .output
-.vinxi
-.tanstack/**
-.nitro
+
+# Electron build artifacts
+apps/desktop/release
+apps/desktop/dist
+
+# Env
 *.local
+.env
+.env.*
+!.env.example
 
-# Wrangler / Cloudflare
-.wrangler/
-.dev.vars
+# Prisma
+apps/api/prisma/*.db
 
-# Editor directories and files
+# Editor
 .vscode/*
 !.vscode/extensions.json
 .idea
 .DS_Store
 *.suo
-*.ntvs*
-*.njsproj
 *.sln
 *.sw?

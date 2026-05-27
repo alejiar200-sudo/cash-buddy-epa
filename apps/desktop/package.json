@@ -1,0 +1,42 @@
+{
+  "name": "@cash-buddy/desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cash Buddy EPA - App de escritorio (lanzador del sistema)",
+  "main": "main.cjs",
+  "scripts": {
+    "dev": "electron .",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^33.3.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.epa.cashbuddy",
+    "productName": "Cash Buddy EPA",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs"
+    ],
+    "extraResources": [
+      { "from": "../api/dist", "to": "api" },
+      { "from": "../../node_modules/.prisma", "to": "api/node_modules/.prisma" },
+      { "from": "../../node_modules/@prisma/client", "to": "api/node_modules/@prisma/client" },
+      { "from": "../api/prisma", "to": "api/prisma" },
+      { "from": "../web/out", "to": "web" }
+    ],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
+  }
+}

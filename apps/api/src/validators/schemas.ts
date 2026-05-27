@@ -1,0 +1,66 @@
+import { z } from "zod";
+
+const categoryCodes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 18] as const;
+
+export const dateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha debe tener formato YYYY-MM-DD");
+
+export const loginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+});
+
+export const registerSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres"),
+  name: z.string().min(1),
+});
+
+export const createMovementSchema = z.object({
+  date: dateSchema,
+  category: z.union(
+    categoryCodes.map((c) => z.literal(c)) as [z.ZodLiteral<number>, z.ZodLiteral<number>, ...z.ZodLiteral<number>[]],
+  ),
+  type: z.enum(["ingreso", "egreso"]),
+  medium: z.enum(["cash", "bank"]),
+  amount: z.number().int(),
+  workerId: z.string().nullish(),
+  description: z.string().nullish(),
+  status: z.enum(["pending", "confirmed"]).optional(),
+  time: z.string().optional(),
+  group: z.string().nullish(),
+  kind: z.enum(["commission", "delivery"]).nullish(),
+  deliveryId: z.string().nullish(),
+  deliveryValue: z.number().int().nullish(),
+});
+
+export const updateMovementSchema = createMovementSchema.partial();
+
+export const createWorkerSchema = z.object({
+  name: z.string().min(1),
+  role: z.enum(["domiciliario", "administrativo"]),
+  active: z.boolean(),
+  color: z.string().optional(),
+});
+
+export const updateWorkerSchema = createWorkerSchema.partial();
+
+export const updateSettingsSchema = z.object({
+  companyName: z.string().optional(),
+  initialCash: z.number().int().optional(),
+  initialBank: z.number().int().optional(),
+  setupComplete: z.boolean().optional(),
+  commissionPercent: z.number().optional(),
+});
+
+const arqueoSchema = z.object({
+  bills: z.number().optional(),
+  coins: z.number().optional(),
+  bank: z.number().optional(),
+});
+
+export const updateArqueoSchema = z.object({
+  slot: z.enum(["AM", "PM", "close"]),
+  arqueo: arqueoSchema,
+});

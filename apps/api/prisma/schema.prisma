@@ -1,0 +1,112 @@
+// Cash Buddy EPA - Esquema de base de datos
+// PostgreSQL + Prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  admin
+  user
+}
+
+enum WorkerRole {
+  domiciliario
+  administrativo
+}
+
+enum MovementType {
+  ingreso
+  egreso
+}
+
+enum Medium {
+  cash
+  bank
+}
+
+enum MovementStatus {
+  pending
+  confirmed
+}
+
+enum MovementKind {
+  commission
+  delivery
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         UserRole @default(user)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// Configuración global (singleton: siempre id = "singleton")
+model Settings {
+  id                String   @id @default("singleton")
+  companyName       String   @default("Epa")
+  initialCash       Int      @default(300000)
+  initialBank       Int      @default(103130)
+  setupComplete     Boolean  @default(false)
+  commissionPercent Float    @default(0)
+  updatedAt         DateTime @updatedAt
+}
+
+model Worker {
+  id        String     @id @default(cuid())
+  name      String
+  role      WorkerRole @default(domiciliario)
+  active    Boolean    @default(true)
+  color     String
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  movements Movement[]
+}
+
+model Day {
+  date        String   @id // YYYY-MM-DD
+  initialCash Int
+  initialBank Int
+  arqueoAM    Json?
+  arqueoPM    Json?
+  arqueoClose Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  movements Movement[]
+}
+
+model Movement {
+  id            String         @id @default(cuid())
+  date          String // YYYY-MM-DD (FK lógica a Day.date)
+  time          String
+  category      Int
+  type          MovementType
+  medium        Medium
+  amount        Int
+  status        MovementStatus @default(confirmed)
+  description   String?
+  group         String?
+  kind          MovementKind?
+  deliveryId    String?
+  deliveryValue Int?
+  createdAt     DateTime       @default(now())
+
+  day      Day     @relation(fields: [date], references: [date], onDelete: Cascade)
+  worker   Worker? @relation(fields: [workerId], references: [id], onDelete: SetNull)
+  workerId String?
+
+  @@index([date])
+  @@index([workerId])
+  @@index([kind])
+}
