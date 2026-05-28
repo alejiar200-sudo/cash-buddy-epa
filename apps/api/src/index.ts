@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { env } from "./config/env";
 import { createServer } from "./server";
 import { prisma } from "./lib/prisma";
+import { autoInit } from "./services/auto-init.service";
 
 // Resuelve la carpeta del frontend estático.
 // 1) WEB_DIR explícito  2) apps/web/out relativo al monorepo
@@ -16,6 +17,10 @@ function resolveWebDir(): string | undefined {
 }
 
 async function main() {
+  // Auto-inicialización idempotente: en un PC nuevo aplica el esquema y crea
+  // admin + domiciliarios por defecto si la BD está vacía.
+  await autoInit();
+
   const webDir = resolveWebDir();
   const app = createServer({ webDir });
 
