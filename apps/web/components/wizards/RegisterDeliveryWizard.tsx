@@ -15,6 +15,7 @@ interface Props {
 }
 
 type HeldBy = "courier" | "admin";
+type Medium = "cash" | "bank";
 
 export function RegisterDeliveryWizard({ open, onOpenChange, date, workerId }: Props) {
   const { state, addMovement, ensureDay } = useStore();
@@ -23,32 +24,33 @@ export function RegisterDeliveryWizard({ open, onOpenChange, date, workerId }: P
 
   const [step, setStep] = useState(1);
   const [value, setValue] = useState(0);
+  const [medium, setMedium] = useState<Medium | null>(null);
   const [held, setHeld] = useState<HeldBy | null>(null);
 
   const commission = Math.round(value * (pct / 100));
   const company = value - commission;
 
-  function reset() { setStep(1); setValue(0); setHeld(null); }
+  function reset() { setStep(1); setValue(0); setMedium(null); setHeld(null); }
   function close() { onOpenChange(false); setTimeout(reset, 250); }
 
   async function submit() {
-    if (!worker || value <= 0 || !held) return;
+    if (!worker || value <= 0 || !medium || !held) return;
     await ensureDay(date);
-    // 1) Delivery movement (cat 1 = cash deliveries by default; status depends on held)
+    // 1) Delivery movement (cat 1 efectivo / cat 2 banco)
     const delivery = await addMovement(date, {
-      category: 1,
+      category: medium === "cash" ? 1 : 2,
       type: "ingreso",
-      medium: "cash",
+      medium,
       amount: value,
       workerId,
-      description: `Domicilio - ${worker.name}`,
+      description: `Domicilio (${medium === "cash" ? "efectivo" : "banco"}) - ${worker.name}`,
       status: held === "admin" ? "confirmed" : "pending",
       kind: "delivery",
     });
-    // 2) Commission (always pending in nómina, regardless of delivery received)
+    // 2) Commission (siempre pendiente en nómina; medio se reasigna al pagar)
     if (commission > 0) {
       await addMovement(date, {
-        category: 15, // default cash; medium is reassigned on payment
+        category: 15, // medio se ajusta al pagarla
         type: "egreso",
         medium: "cash",
         amount: commission,
@@ -62,8 +64,8 @@ export function RegisterDeliveryWizard({ open, onOpenChange, date, workerId }: P
     }
     toast.success(
       held === "admin"
-        ? `✅ Domicilio recibido (${formatCOP(value)})`
-        : `⚠️ Domicilio registrado — ${worker.name} debe ${formatCOP(value)}`
+        ? `✅ Domicilio recibido (${medium === "cash" ? "💵" : "🏦"} ${formatCOP(value)})`
+        : `⚠️ Domicilio registrado — ${worker.name} debe ${formatCOP(value)} (${medium === "cash" ? "efectivo" : "banco"})`,
     );
     close();
   }
@@ -75,14 +77,16 @@ export function RegisterDeliveryWizard({ open, onOpenChange, date, workerId }: P
       open={open}
       onOpenChange={(v) => { if (!v) close(); }}
       step={step}
-      total={3}
+      total={4}
       title={
         step === 1 ? `Domicilio de ${worker.name.toUpperCase()}`
-        : step === 2 ? "¿Quién tiene el dinero ahora?"
+        : step === 2 ? "¿Efectivo o banco?"
+        : step === 3 ? "¿Quién tiene el dinero ahora?"
         : "Resumen del domicilio"
       }
       subtitle={
         step === 1 ? "¿Cuánto vale el domicilio que vas a registrar?"
+        : step === 2 ? "Selecciona el medio en que se cobra"
         : undefined
       }
       onBack={step > 1 ? () => setStep(step - 1) : undefined}
@@ -118,9 +122,32 @@ export function RegisterDeliveryWizard({ open, onOpenChange, date, workerId }: P
 
       {step === 2 && (
         <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              onClick={() => { setMedium("cash"); setStep(3); }}
+              className={`p-6 rounded-2xl border-2 transition flex flex-col items-center gap-2 ${medium === "cash" ? "border-primary bg-cash-soft text-cash" : "border-border glass hover:border-primary/50"}`}
+            >
+              <div className="text-4xl">💵</div>
+              <div className="font-bold">Efectivo</div>
+              <div className="text-xs text-muted-foreground">Entra a caja</div>
+            </button>
+            <button
+              onClick={() => { setMedium("bank"); setStep(3); }}
+              className={`p-6 rounded-2xl border-2 transition flex flex-col items-center gap-2 ${medium === "bank" ? "border-accent bg-bank-soft text-bank" : "border-border glass hover:border-accent/50"}`}
+            >
+              <div className="text-4xl">🏦</div>
+              <div className="font-bold">Banco</div>
+              <div className="text-xs text-muted-foreground">Transferencia</div>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step === 3 && (
+        <div className="space-y-3">
           <div className="grid grid-cols-1 gap-3">
             <button
-              onClick={() => { setHeld("courier"); setStep(3); }}
+              onClick={() => { setHeld("courier"); setStep(4); }}
               className={`p-5 rounded-2xl border-2 transition flex items-center gap-4 text-left ${held === "courier" ? "border-danger bg-danger-soft" : "border-border glass hover:border-danger/50"}`}
             >
               <Mailbox className="h-8 w-8 text-danger" />
@@ -130,7 +157,7 @@ export function RegisterDeliveryWizard({ open, onOpenChange, date, workerId }: P
               </div>
             </button>
             <button
-              onClick={() => { setHeld("admin"); setStep(3); }}
+              onClick={() => { setHeld("admin"); setStep(4); }}
               className={`p-5 rounded-2xl border-2 transition flex items-center gap-4 text-left ${held === "admin" ? "border-cash bg-cash-soft" : "border-border glass hover:border-cash/50"}`}
             >
               <CheckCircle2 className="h-8 w-8 text-cash" />
@@ -143,14 +170,15 @@ export function RegisterDeliveryWizard({ open, onOpenChange, date, workerId }: P
         </div>
       )}
 
-      {step === 3 && (
+      {step === 4 && (
         <div className="space-y-3">
           <div className="glass-strong rounded-2xl p-5 space-y-2 tnum">
             <Row label="📦 Valor domicilio" value={formatCOP(value)} />
+            <Row label="🧾 Medio" value={medium === "cash" ? "💵 Efectivo" : "🏦 Banco"} />
             <Row
-              label={held === "admin" ? "🏢 Entra a caja" : "🏢 Pendiente entrar"}
+              label={held === "admin" ? `🏢 Entra a ${medium === "cash" ? "caja" : "banco"}` : `🏢 Pendiente entrar (${medium === "cash" ? "caja" : "banco"})`}
               value={formatCOP(value)}
-              color={held === "admin" ? "text-cash" : "text-warn"}
+              color={held === "admin" ? (medium === "cash" ? "text-cash" : "text-bank") : "text-warn"}
             />
             {commission > 0 && (
               <Row label={`🛵 Comisión ${worker.name} (${pct}%)`} value={formatCOP(commission)} color="text-primary" />

@@ -46,7 +46,8 @@ export function courierStatusForDay(
 
   for (const m of day.movements) {
     if (m.workerId !== workerId) continue;
-    if (m.category === 5 && m.medium === "cash") {
+    // Base entregada/devuelta: cat 5 (efectivo) o cat 6 (banco).
+    if ((m.category === 5 && m.medium === "cash") || (m.category === 6 && m.medium === "bank")) {
       if (m.type === "egreso") baseGiven += m.amount;
       else baseReturned += m.amount;
     }

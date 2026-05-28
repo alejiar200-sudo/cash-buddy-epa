@@ -23,8 +23,10 @@ export function CourierPaidWizard({ open, onOpenChange, date, workerId }: Props)
 
   const [step, setStep] = useState(1);
   const [amount, setAmount] = useState(0);
+  const [baseMedium, setBaseMedium] = useState<"cash" | "bank" | null>(null);
+  const pendingBase = Math.max(0, status.baseGiven - status.baseReturned);
 
-  function reset() { setStep(1); setAmount(0); }
+  function reset() { setStep(1); setAmount(0); setBaseMedium(null); }
   function close() { onOpenChange(false); setTimeout(reset, 250); }
 
   async function submit() {
@@ -35,10 +37,18 @@ export function CourierPaidWizard({ open, onOpenChange, date, workerId }: Props)
       await updateMovement(date, m.id, { status: "confirmed" });
     }
 
-    // 2. Register base return as cash ingreso (cat 5)
-    const baseToReturn = Math.min(amount, status.baseGiven - status.baseReturned);
-    if (baseToReturn > 0) {
-      await addMovement(date, { category: 5, type: "ingreso", medium: "cash", amount: baseToReturn, workerId, description: `Devolución base - ${worker.name}`, status: "confirmed" });
+    // 2. Register base return en el medio elegido (cat 5 efectivo / cat 6 banco)
+    const baseToReturn = Math.min(amount, pendingBase);
+    if (baseToReturn > 0 && baseMedium) {
+      await addMovement(date, {
+        category: baseMedium === "cash" ? 5 : 6,
+        type: "ingreso",
+        medium: baseMedium,
+        amount: baseToReturn,
+        workerId,
+        description: `Devolución base (${baseMedium === "cash" ? "efectivo" : "banco"}) - ${worker.name}`,
+        status: "confirmed",
+      });
     }
     toast.success(`✅ Registrado pago de ${worker.name}`);
     close();
@@ -79,7 +89,27 @@ export function CourierPaidWizard({ open, onOpenChange, date, workerId }: Props)
             Todo — {formatCOP(owedTotal)}
           </button>
 
-          <button onClick={() => setStep(2)} disabled={amount <= 0} className="w-full bg-primary text-primary-foreground font-bold py-4 rounded-2xl shadow-cash disabled:opacity-40">
+          {pendingBase > 0 && (
+            <div>
+              <div className="text-xs uppercase tracking-wider text-muted-foreground mb-2">¿En qué medio te devuelve la base?</div>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => setBaseMedium("cash")}
+                  className={`p-3 rounded-2xl border-2 font-bold transition ${baseMedium === "cash" ? "border-primary bg-cash-soft text-cash" : "border-border glass hover:border-primary/50"}`}
+                >
+                  💵 Efectivo
+                </button>
+                <button
+                  onClick={() => setBaseMedium("bank")}
+                  className={`p-3 rounded-2xl border-2 font-bold transition ${baseMedium === "bank" ? "border-accent bg-bank-soft text-bank" : "border-border glass hover:border-accent/50"}`}
+                >
+                  🏦 Banco
+                </button>
+              </div>
+            </div>
+          )}
+
+          <button onClick={() => setStep(2)} disabled={amount <= 0 || (pendingBase > 0 && !baseMedium)} className="w-full bg-primary text-primary-foreground font-bold py-4 rounded-2xl shadow-cash disabled:opacity-40">
             Siguiente →
           </button>
         </div>

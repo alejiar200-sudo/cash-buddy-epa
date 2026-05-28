@@ -18,21 +18,29 @@ export function GiveBaseWizard({ open, onOpenChange, date, presetWorkerId }: Pro
   const [step, setStep] = useState(presetWorkerId ? 2 : 1);
   const [workerId, setWorkerId] = useState<string | undefined>(presetWorkerId);
   const [amount, setAmount] = useState(0);
+  const [medium, setMedium] = useState<"cash" | "bank" | null>(null);
 
   const couriers = state.workers.filter((w) => w.active && w.role === "domiciliario");
   const worker = couriers.find((w) => w.id === workerId);
 
-  function reset() { setStep(presetWorkerId ? 2 : 1); setWorkerId(presetWorkerId); setAmount(0); }
+  function reset() { setStep(presetWorkerId ? 2 : 1); setWorkerId(presetWorkerId); setAmount(0); setMedium(null); }
   function close() { onOpenChange(false); setTimeout(reset, 250); }
 
-  function submit() {
-    if (!worker || amount <= 0) return;
-    ensureDay(date);
-    addMovement(date, {
-      category: 5, type: "egreso", medium: "cash", amount, workerId: worker.id,
-      description: `Base entregada a ${worker.name}`, status: "confirmed",
+  async function submit() {
+    if (!worker || amount <= 0 || !medium) return;
+    await ensureDay(date);
+    await addMovement(date, {
+      category: medium === "cash" ? 5 : 6,
+      type: "egreso",
+      medium,
+      amount,
+      workerId: worker.id,
+      description: `Base entregada a ${worker.name} (${medium === "cash" ? "efectivo" : "banco"})`,
+      status: "confirmed",
     });
-    toast.success(`✅ Base entregada a ${worker.name}`, { description: `Saliste $${amount.toLocaleString("es-CO")} de efectivo` });
+    toast.success(`✅ Base entregada a ${worker.name}`, {
+      description: `${medium === "cash" ? "💵 Efectivo" : "🏦 Banco"} · $${amount.toLocaleString("es-CO")}`,
+    });
     close();
   }
 
@@ -43,7 +51,7 @@ export function GiveBaseWizard({ open, onOpenChange, date, presetWorkerId }: Pro
       step={presetWorkerId ? 1 : step}
       total={presetWorkerId ? 1 : 2}
       title={step === 1 ? "¿A quién le vas a dar la base?" : `Dar base a ${worker?.name?.toUpperCase() ?? ""}`}
-      subtitle={step === 2 ? "¿Cuánto efectivo le vas a entregar?" : undefined}
+      subtitle={step === 2 ? "Elige el medio y el monto" : undefined}
       onBack={step === 2 && !presetWorkerId ? () => setStep(1) : undefined}
     >
       {step === 1 && (
@@ -71,6 +79,24 @@ export function GiveBaseWizard({ open, onOpenChange, date, presetWorkerId }: Pro
             </div>
           </div>
 
+          <div>
+            <div className="text-xs uppercase tracking-wider text-muted-foreground mb-2">¿En qué medio le das la base?</div>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={() => setMedium("cash")}
+                className={`p-4 rounded-2xl border-2 font-bold transition ${medium === "cash" ? "border-primary bg-cash-soft text-cash" : "border-border glass hover:border-primary/50"}`}
+              >
+                💵 Efectivo
+              </button>
+              <button
+                onClick={() => setMedium("bank")}
+                className={`p-4 rounded-2xl border-2 font-bold transition ${medium === "bank" ? "border-accent bg-bank-soft text-bank" : "border-border glass hover:border-accent/50"}`}
+              >
+                🏦 Banco
+              </button>
+            </div>
+          </div>
+
           <MoneyInput value={amount} onChange={setAmount} autoFocus />
 
           <div className="flex flex-wrap gap-2">
@@ -81,14 +107,14 @@ export function GiveBaseWizard({ open, onOpenChange, date, presetWorkerId }: Pro
             ))}
           </div>
 
-          {amount > 0 && (
-            <div className="p-4 rounded-2xl bg-cash-soft ring-cash text-cash text-center font-medium animate-slide-in">
-              Darás <span className="font-black tnum">${amount.toLocaleString("es-CO")}</span> a {worker.name}
+          {amount > 0 && medium && (
+            <div className={`p-4 rounded-2xl text-center font-medium animate-slide-in ${medium === "cash" ? "bg-cash-soft ring-cash text-cash" : "bg-bank-soft ring-bank text-bank"}`}>
+              Darás <span className="font-black tnum">${amount.toLocaleString("es-CO")}</span> a {worker.name} por {medium === "cash" ? "💵 efectivo" : "🏦 banco"}
             </div>
           )}
 
           <button
-            disabled={amount <= 0}
+            disabled={amount <= 0 || !medium}
             onClick={submit}
             className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground font-bold py-4 rounded-2xl shadow-cash disabled:opacity-40 hover:scale-[1.01] active:scale-[0.99] transition"
           >

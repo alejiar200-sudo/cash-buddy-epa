@@ -76,15 +76,18 @@ export function NewMovementWizard({ open, onOpenChange, date }: Props) {
       )}
       {choice === "receive-base" && (
         <GenericMovementWizard open onOpenChange={(v) => { if (!v) close(); }} date={date}
-          title="Recibir base devuelta" category={5} type="ingreso" medium="cash" needsWorker />
+          title="Recibir base devuelta" category={5} type="ingreso" medium="cash" needsWorker
+          mediumOptions={{ cash: 5, bank: 6 }} />
       )}
       {choice === "temp-out" && (
         <GenericMovementWizard open onOpenChange={(v) => { if (!v) close(); }} date={date}
-          title="Salida temporal" category={11} type="egreso" medium="cash" />
+          title="Salida temporal" category={11} type="egreso" medium="cash"
+          mediumOptions={{ cash: 11, bank: 12 }} />
       )}
       {choice === "pending-in" && (
         <GenericMovementWizard open onOpenChange={(v) => { if (!v) close(); }} date={date}
-          title="Ingreso pendiente" category={13} type="ingreso" medium="cash" status="pending" />
+          title="Ingreso pendiente" category={13} type="ingreso" medium="cash" status="pending"
+          mediumOptions={{ cash: 13, bank: 14 }} />
       )}
     </>
   );
