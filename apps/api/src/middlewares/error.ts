@@ -14,7 +14,8 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     return res.status(err.status).json({ error: err.message, details: err.details });
   }
   console.error("[error]", err);
-  res.status(500).json({ error: "Error interno del servidor" });
+  const message = err instanceof Error ? err.message : "Error interno del servidor";
+  res.status(500).json({ error: message });
 }
 
 // Envuelve handlers async para propagar errores al errorHandler.

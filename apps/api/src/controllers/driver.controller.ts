@@ -1,0 +1,20 @@
+import type { Request, Response } from "express";
+import * as svc from "../services/driver.service";
+
+export async function list(req: Request, res: Response) {
+  const branchId = req.query.branchId as string | undefined;
+  res.json(await svc.listDrivers(branchId));
+}
+
+export async function detail(req: Request, res: Response) {
+  res.json(await svc.getDriverDetail(req.params.id));
+}
+
+export async function statement(req: Request, res: Response) {
+  res.json(await svc.getDriverStatement(req.params.id));
+}
+
+export async function registerPayment(req: Request, res: Response) {
+  const { amount, notes } = req.body;
+  res.status(201).json(await svc.registerPayment(req.params.id, amount, notes));
+}

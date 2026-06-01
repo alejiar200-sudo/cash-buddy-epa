@@ -4,6 +4,7 @@ import { env } from "./config/env";
 import { createServer } from "./server";
 import { prisma } from "./lib/prisma";
 import { autoInit } from "./services/auto-init.service";
+import { startSyncScheduler } from "./services/sync-scheduler.service";
 
 // Resuelve la carpeta del frontend estático.
 // 1) WEB_DIR explícito  2) apps/web/out relativo al monorepo
@@ -31,6 +32,8 @@ async function main() {
     if (webDir) console.log(`  ➜ Frontend servido desde: ${webDir}`);
     else console.log(`  ⚠ Frontend estático no encontrado (solo API). Ejecuta el build de web.`);
   });
+
+  startSyncScheduler();
 
   const shutdown = async () => {
     console.log("\n  Cerrando servidor...");
