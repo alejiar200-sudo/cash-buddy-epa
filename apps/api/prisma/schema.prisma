@@ -233,6 +233,7 @@ model DriverPayment {
   driverId String
   branchId String
   amount   Int
+  medium   Medium   @default(cash)
   notes    String?
   date     DateTime @default(now())
 

@@ -6,12 +6,15 @@ import { toast } from "sonner";
 import * as api from "@/lib/sd-api";
 import type { DriverDebt, Branch } from "@/lib/sd-api";
 import { formatCOP } from "@/lib/format";
+import { DriverStatementModal } from "@/components/DriverStatementModal";
+import { LiveBadge } from "@/components/LiveBadge";
 
 export default function DeudasPage() {
   const [debts, setDebts] = useState<DriverDebt[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [branchId, setBranchId] = useState("");
   const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<DriverDebt | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -25,6 +28,14 @@ export default function DeudasPage() {
 
   useEffect(() => { load(); }, [branchId]);
 
+  // Refresco en vivo cada 3s sin spinner
+  useEffect(() => {
+    const t = setInterval(() => {
+      api.getDebtsDashboard(branchId || undefined).then(setDebts).catch(() => {});
+    }, 3_000);
+    return () => clearInterval(t);
+  }, [branchId]);
+
   const totalDebt = debts.reduce((s, d) => s + d.pendingDebt, 0);
   const highDebt = debts.filter(d => d.pendingDebt > 100000);
 
@@ -32,7 +43,10 @@ export default function DeudasPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-black">Dashboard de Deudas</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-black">Dashboard de Deudas</h1>
+            <LiveBadge />
+          </div>
           <p className="text-sm text-muted-foreground">{debts.length} domiciliarios con deuda · {formatCOP(totalDebt)} total pendiente</p>
         </div>
         <div className="flex gap-2">
@@ -92,6 +106,7 @@ export default function DeudasPage() {
                 <th className="text-left px-5 py-3">Sucursal</th>
                 <th className="text-right px-5 py-3">Deuda pendiente</th>
                 <th className="text-center px-5 py-3">Nivel</th>
+                <th className="px-5 py-3" />
               </tr>
             </thead>
             <tbody>
@@ -107,12 +122,28 @@ export default function DeudasPage() {
                     <td className="px-5 py-3 text-center">
                       <span className={`text-xs px-2 py-0.5 rounded-full font-bold capitalize ${levelStyle}`}>{level}</span>
                     </td>
+                    <td className="px-5 py-3 text-right">
+                      <button
+                        onClick={() => setSelected(d)}
+                        className="px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-bold hover:opacity-90 transition"
+                      >
+                        Registrar pago
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
         </div>
+      )}
+
+      {selected && (
+        <DriverStatementModal
+          driver={{ id: selected.id, name: selected.name, branch: selected.branch }}
+          onClose={() => setSelected(null)}
+          onRefresh={load}
+        />
       )}
     </div>
   );

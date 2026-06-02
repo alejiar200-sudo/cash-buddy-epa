@@ -15,6 +15,11 @@ export async function statement(req: Request, res: Response) {
 }
 
 export async function registerPayment(req: Request, res: Response) {
-  const { amount, notes } = req.body;
-  res.status(201).json(await svc.registerPayment(req.params.id, amount, notes));
+  const { amount, medium, notes } = req.body;
+  res.status(201).json(await svc.registerPayment(req.params.id, Number(amount), medium, notes));
+}
+
+export async function ordersToday(req: Request, res: Response) {
+  const branchId = (req.query.branchId as string | undefined) || undefined;
+  res.json(await svc.getOrdersToday(branchId));
 }

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import * as api from "@/lib/sd-api";
 import type { Order, Branch, Driver } from "@/lib/sd-api";
 import { formatCOP } from "@/lib/format";
+import { LiveBadge } from "@/components/LiveBadge";
 
 export default function PedidosPage() {
   const [orders, setOrders] = useState<Order[]>([]);
@@ -39,9 +40,32 @@ export default function PedidosPage() {
   useEffect(() => { if (branchId) { setLoading(true); api.getOrdersByBranch(branchId, from || undefined, to || undefined).then(setOrders).catch(() => toast.error("Error")).finally(() => setLoading(false)); } }, [branchId, from, to]);
   useEffect(() => { if (branchId) { api.getDrivers(branchId).then(setDrivers); } }, [branchId]);
 
+  // Refresco en vivo cada 3s (solo orders, sin spinner ni toasts)
+  useEffect(() => {
+    if (!branchId) return;
+    const t = setInterval(() => {
+      api.getOrdersByBranch(branchId, from || undefined, to || undefined).then(setOrders).catch(() => {});
+    }, 3_000);
+    return () => clearInterval(t);
+  }, [branchId, from, to]);
+
   const totalValue = orders.reduce((s, o) => s + o.deliveryValue, 0);
   const totalCompany = orders.reduce((s, o) => s + o.companyAmount, 0);
   const currentBranch = branches.find(b => b.id === branchId);
+
+  // Orden ascendente por el número real de pedido de Shipday (numérico cuando se puede).
+  const sortedOrders = [...orders].sort((a, b) => {
+    const an = a.orderNumber ?? "";
+    const bn = b.orderNumber ?? "";
+    const ai = parseInt(an, 10);
+    const bi = parseInt(bn, 10);
+    const aIsNum = !Number.isNaN(ai);
+    const bIsNum = !Number.isNaN(bi);
+    if (aIsNum && bIsNum) return ai - bi;
+    if (aIsNum) return -1;
+    if (bIsNum) return 1;
+    return an.localeCompare(bn);
+  });
 
   const webhookUrl = typeof window !== "undefined"
     ? `${window.location.protocol}//${window.location.hostname}:4000/api/webhooks/shipday/${branchId}`
@@ -51,7 +75,10 @@ export default function PedidosPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-black">Pedidos entregados</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-black">Pedidos entregados</h1>
+            <LiveBadge />
+          </div>
           <p className="text-sm text-muted-foreground">{orders.length} pedidos · {formatCOP(totalValue)} total · {formatCOP(totalCompany)} empresa</p>
         </div>
         <div className="flex gap-2">
@@ -90,7 +117,7 @@ export default function PedidosPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border text-muted-foreground text-xs uppercase">
-              <th className="text-left px-4 py-3">#</th>
+              <th className="text-left px-4 py-3"># Pedido</th>
               <th className="text-left px-4 py-3">Fecha</th>
               <th className="text-left px-4 py-3">Domiciliario</th>
               <th className="text-left px-4 py-3">Cliente</th>
@@ -102,11 +129,11 @@ export default function PedidosPage() {
           <tbody>
             {loading ? (
               <tr><td colSpan={7} className="text-center py-12 text-muted-foreground">Cargando...</td></tr>
-            ) : orders.length === 0 ? (
+            ) : sortedOrders.length === 0 ? (
               <tr><td colSpan={7} className="text-center py-12 text-muted-foreground">Sin pedidos — registra uno manualmente o configura el webhook</td></tr>
-            ) : orders.map((o, i) => (
+            ) : sortedOrders.map(o => (
               <tr key={o.id} className="border-b border-border/50 hover:bg-secondary/30 transition">
-                <td className="px-4 py-2.5 text-muted-foreground tnum">{i + 1}</td>
+                <td className="px-4 py-2.5 font-bold tnum">#{o.orderNumber ?? "—"}</td>
                 <td className="px-4 py-2.5 text-muted-foreground">
                   {o.deliveredAt ? new Date(o.deliveredAt).toLocaleString("es-CO", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}
                 </td>

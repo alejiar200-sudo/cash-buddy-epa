@@ -43,8 +43,8 @@ export async function getDashboard(branchId?: string) {
       _count: { id: true },
     }),
     prisma.shipdayOrder.findMany({
-      where: branchWhere,
-      orderBy: { createdAt: "desc" },
+      where: { ...branchWhere, status: { in: ["DELIVERED", "COMPLETED"] } },
+      orderBy: { deliveredAt: "desc" },
       take: 10,
       include: {
         driver: { select: { id: true, name: true } },

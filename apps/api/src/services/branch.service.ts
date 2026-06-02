@@ -73,6 +73,19 @@ export async function testBranchConnection(id: string) {
   return result;
 }
 
+// Caché en memoria de pedidos vistos como activos (pre-entrega), por sucursal.
+// Cuando desaparecen del feed activo → se asumen entregados y se registran.
+interface ActiveOrderSnapshot {
+  shipdayOrderId: string;
+  driverShipdayId: string | null;
+  deliveryValue: number;
+  orderNumber: string | null;
+  customerName: string | null;
+  customerAddress: string | null;
+  raw: object;
+}
+const activeOrdersByBranch = new Map<string, Map<string, ActiveOrderSnapshot>>();
+
 export async function syncBranch(id: string): Promise<{ drivers: number; orders: number }> {
   const branch = await prisma.branch.findUnique({ where: { id } });
   if (!branch) throw notFound("Sucursal no encontrada");
@@ -105,94 +118,91 @@ export async function syncBranch(id: string): Promise<{ drivers: number; orders:
       driversCount++;
     }
 
-    // 2. Sync orders — estrategia dual:
-    //    A) Pedidos activos: capturar mientras están en progreso (STARTED, etc.)
-    //    B) Pedidos completados: Shipday los elimina de la API al completarlos,
-    //       por eso los marcamos como completados cuando desaparecen del API activo.
+    // 2. Pedidos — solo guardamos en BD los DELIVERED/COMPLETED.
+    //    Los activos quedan en caché en memoria; cuando desaparecen del feed,
+    //    asumimos entrega y recién ahí se persiste el pedido + se acumula deuda.
     const allActiveOrders = await shipday.getAllOrders(apiKey);
     const commissionPercent = await getCommissionPercent();
-    const activeIds = new Set(allActiveOrders.map(o => String(o.orderId)));
+    const previousActive = activeOrdersByBranch.get(id) ?? new Map<string, ActiveOrderSnapshot>();
+    const nextActive = new Map<string, ActiveOrderSnapshot>();
 
-    // B) Detectar pedidos que antes estaban activos y ahora desaparecieron → completados
-    const pendingInDb = await prisma.shipdayOrder.findMany({
-      where: { branchId: id, status: { in: ["STARTED", "ACCEPTED", "ASSIGNED", "PICKED_UP", "IN_PROGRESS"] } },
-    });
-    for (const dbOrder of pendingInDb) {
-      if (!activeIds.has(dbOrder.shipdayOrderId)) {
-        // Desapareció del API activo → se completó
-        await prisma.shipdayOrder.update({
-          where: { id: dbOrder.id },
-          data: { status: "DELIVERED", deliveredAt: new Date() },
-        });
-        // Calcular deuda si aún no se calculó (companyAmount > 0 y driver asignado)
-        if (dbOrder.driverId && dbOrder.companyAmount > 0) {
-          await prisma.driver.update({
-            where: { id: dbOrder.driverId },
-            data: { pendingDebt: { increment: dbOrder.companyAmount } },
-          });
-          const dateStr = new Date().toISOString().slice(0, 10);
-          await prisma.dailyDriverStat.upsert({
-            where: { date_driverId: { date: dateStr, driverId: dbOrder.driverId } },
-            create: { date: dateStr, branchId: id, driverId: dbOrder.driverId, orderCount: 1, totalValue: dbOrder.deliveryValue, companyTotal: dbOrder.companyAmount },
-            update: { orderCount: { increment: 1 }, totalValue: { increment: dbOrder.deliveryValue }, companyTotal: { increment: dbOrder.companyAmount } },
-          });
-        }
-        ordersCount++;
-      }
-    }
-
-    // A) Registrar pedidos activos nuevos (para detectar su finalización en el próximo sync)
+    // a) Procesar feed actual: separar DELIVERED (persistir) vs activos (cachear).
+    const seenIds = new Set<string>();
     for (const so of allActiveOrders) {
       const orderId = String(so.orderId);
-      const existing = await prisma.shipdayOrder.findUnique({ where: { shipdayOrderId: orderId } });
-      if (existing) continue;
-
-      const deliveryValue = shipday.getOrderDeliveryValue(so);
-      const companyAmount = Math.round(deliveryValue * (commissionPercent / 100));
-
-      let driverId: string | null = null;
-      const carrierId = shipday.getOrderCarrierId(so);
-      if (carrierId) {
-        const driver = await prisma.driver.findUnique({
-          where: { shipdayDriverId_branchId: { shipdayDriverId: carrierId, branchId: id } },
-        });
-        driverId = driver?.id ?? null;
-      }
-
+      seenIds.add(orderId);
       const currentState = so.orderStatus?.orderState ?? "STARTED";
       const isDelivered = ["DELIVERED", "COMPLETED"].includes(currentState);
 
-      const order = await prisma.shipdayOrder.create({
-        data: {
-          shipdayOrderId: orderId,
-          branchId: id,
-          driverId,
+      if (isDelivered) {
+        const created = await persistDeliveredOrder(id, orderId, {
+          deliveryValue: shipday.getOrderDeliveryValue(so),
+          driverShipdayId: shipday.getOrderCarrierId(so),
           orderNumber: so.orderNumber ?? null,
-          deliveryValue,
-          companyAmount,
           customerName: so.customer?.name ?? null,
           customerAddress: so.customer?.address ?? null,
-          status: currentState,
-          deliveredAt: isDelivered ? shipday.getOrderDeliveredAt(so) : null,
-          rawData: so as object,
-        },
-      });
-
-      // Si ya llega como DELIVERED directamente, acumular deuda inmediatamente
-      if (isDelivered && driverId && companyAmount > 0) {
-        await prisma.driver.update({
-          where: { id: driverId },
-          data: { pendingDebt: { increment: companyAmount } },
+          deliveredAt: shipday.getOrderDeliveredAt(so),
+          commissionPercent,
+          raw: so as object,
         });
-        const dateStr = (order.deliveredAt ?? new Date()).toISOString().slice(0, 10);
-        await prisma.dailyDriverStat.upsert({
-          where: { date_driverId: { date: dateStr, driverId } },
-          create: { date: dateStr, branchId: id, driverId, orderCount: 1, totalValue: deliveryValue, companyTotal: companyAmount },
-          update: { orderCount: { increment: 1 }, totalValue: { increment: deliveryValue }, companyTotal: { increment: companyAmount } },
+        if (created) ordersCount++;
+      } else {
+        nextActive.set(orderId, {
+          shipdayOrderId: orderId,
+          driverShipdayId: shipday.getOrderCarrierId(so),
+          deliveryValue: shipday.getOrderDeliveryValue(so),
+          orderNumber: so.orderNumber ?? null,
+          customerName: so.customer?.name ?? null,
+          customerAddress: so.customer?.address ?? null,
+          raw: so as object,
         });
-        ordersCount++;
       }
     }
+
+    // b) Pedidos que estaban activos en memoria y ya no aparecen → asumir entregados.
+    for (const [orderId, snap] of previousActive) {
+      if (seenIds.has(orderId)) continue;
+      const created = await persistDeliveredOrder(id, orderId, {
+        deliveryValue: snap.deliveryValue,
+        driverShipdayId: snap.driverShipdayId,
+        orderNumber: snap.orderNumber,
+        customerName: snap.customerName,
+        customerAddress: snap.customerAddress,
+        deliveredAt: new Date(),
+        commissionPercent,
+        raw: snap.raw,
+      });
+      if (created) ordersCount++;
+    }
+
+    // c) Fallback: pedidos guardados en BD con estado activo (de versiones previas
+    //    o reinicios) que ya no aparecen en el feed → flip a DELIVERED y acumular deuda.
+    const orphanActive = await prisma.shipdayOrder.findMany({
+      where: { branchId: id, status: { in: ["STARTED", "ACCEPTED", "ASSIGNED", "PICKED_UP", "IN_PROGRESS"] } },
+    });
+    for (const dbOrder of orphanActive) {
+      if (seenIds.has(dbOrder.shipdayOrderId)) continue;
+      const now = new Date();
+      await prisma.shipdayOrder.update({
+        where: { id: dbOrder.id },
+        data: { status: "DELIVERED", deliveredAt: now },
+      });
+      if (dbOrder.driverId && dbOrder.companyAmount > 0) {
+        await prisma.driver.update({
+          where: { id: dbOrder.driverId },
+          data: { pendingDebt: { increment: dbOrder.companyAmount } },
+        });
+        const dateStr = now.toISOString().slice(0, 10);
+        await prisma.dailyDriverStat.upsert({
+          where: { date_driverId: { date: dateStr, driverId: dbOrder.driverId } },
+          create: { date: dateStr, branchId: id, driverId: dbOrder.driverId, orderCount: 1, totalValue: dbOrder.deliveryValue, companyTotal: dbOrder.companyAmount },
+          update: { orderCount: { increment: 1 }, totalValue: { increment: dbOrder.deliveryValue }, companyTotal: { increment: dbOrder.companyAmount } },
+        });
+      }
+      ordersCount++;
+    }
+
+    activeOrdersByBranch.set(id, nextActive);
 
     await prisma.branch.update({
       where: { id },
@@ -207,6 +217,62 @@ export async function syncBranch(id: string): Promise<{ drivers: number; orders:
   }
 
   return { drivers: driversCount, orders: ordersCount };
+}
+
+interface DeliveredPayload {
+  deliveryValue: number;
+  driverShipdayId: string | null;
+  orderNumber: string | null;
+  customerName: string | null;
+  customerAddress: string | null;
+  deliveredAt: Date;
+  commissionPercent: number;
+  raw: object;
+}
+
+async function persistDeliveredOrder(branchId: string, shipdayOrderId: string, p: DeliveredPayload): Promise<boolean> {
+  const existing = await prisma.shipdayOrder.findUnique({ where: { shipdayOrderId } });
+  if (existing) return false;
+
+  const companyAmount = Math.round(p.deliveryValue * (p.commissionPercent / 100));
+  let driverId: string | null = null;
+  if (p.driverShipdayId) {
+    const d = await prisma.driver.findUnique({
+      where: { shipdayDriverId_branchId: { shipdayDriverId: p.driverShipdayId, branchId } },
+    });
+    driverId = d?.id ?? null;
+  }
+
+  await prisma.shipdayOrder.create({
+    data: {
+      shipdayOrderId,
+      branchId,
+      driverId,
+      orderNumber: p.orderNumber,
+      deliveryValue: p.deliveryValue,
+      companyAmount,
+      customerName: p.customerName,
+      customerAddress: p.customerAddress,
+      status: "DELIVERED",
+      deliveredAt: p.deliveredAt,
+      rawData: p.raw,
+    },
+  });
+
+  if (driverId && companyAmount > 0) {
+    await prisma.driver.update({
+      where: { id: driverId },
+      data: { pendingDebt: { increment: companyAmount } },
+    });
+    const dateStr = p.deliveredAt.toISOString().slice(0, 10);
+    await prisma.dailyDriverStat.upsert({
+      where: { date_driverId: { date: dateStr, driverId } },
+      create: { date: dateStr, branchId, driverId, orderCount: 1, totalValue: p.deliveryValue, companyTotal: companyAmount },
+      update: { orderCount: { increment: 1 }, totalValue: { increment: p.deliveryValue }, companyTotal: { increment: companyAmount } },
+    });
+  }
+
+  return true;
 }
 
 async function getCommissionPercent(): Promise<number> {

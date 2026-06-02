@@ -1,40 +1,82 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { RefreshCw, AlertCircle } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { RefreshCw, AlertCircle, Wallet, Banknote, Package, ChevronDown, ChevronUp } from "lucide-react";
 import { toast } from "sonner";
 import * as api from "@/lib/sd-api";
-import type { Driver, Branch } from "@/lib/sd-api";
+import type { Driver, Branch, Order } from "@/lib/sd-api";
 import { formatCOP } from "@/lib/format";
+import { DriverStatementModal } from "@/components/DriverStatementModal";
+import { LiveBadge } from "@/components/LiveBadge";
 
 export default function DomiciliariosShipdayPage() {
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [todayOrders, setTodayOrders] = useState<Order[]>([]);
   const [branchId, setBranchId] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Driver | null>(null);
+  const [showTodayList, setShowTodayList] = useState(true);
 
   const load = async () => {
     setLoading(true);
     try {
-      const [d, b] = await Promise.all([api.getDrivers(branchId || undefined), api.getBranches()]);
+      const [d, b, t] = await Promise.all([
+        api.getDrivers(branchId || undefined),
+        api.getBranches(),
+        api.getOrdersToday(branchId || undefined),
+      ]);
       setDrivers(d);
       setBranches(b);
-    } catch { toast.error("Error al cargar"); }
+      setTodayOrders(t);
+    } catch {
+      toast.error("Error al cargar");
+    }
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, [branchId]);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [branchId]);
 
+  // Auto-refresh cada 3s para ver pedidos nuevos casi en vivo
+  useEffect(() => {
+    const t = setInterval(load, 3_000);
+    return () => clearInterval(t);
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [branchId]);
+
+  // Resumen por domiciliario para hoy
+  const todayByDriver = useMemo(() => {
+    const map = new Map<string, { driverId: string; name: string; count: number; total: number; company: number; orders: Order[] }>();
+    for (const o of todayOrders) {
+      const key = o.driver?.id ?? "sin-asignar";
+      const name = o.driver?.name ?? "Sin asignar";
+      const cur = map.get(key) ?? { driverId: key, name, count: 0, total: 0, company: 0, orders: [] };
+      cur.count++;
+      cur.total += o.deliveryValue;
+      cur.company += o.companyAmount;
+      cur.orders.push(o);
+      map.set(key, cur);
+    }
+    return Array.from(map.values()).sort((a, b) => b.count - a.count);
+  }, [todayOrders]);
+
+  const totalDebt = drivers.reduce((s, d) => s + d.pendingDebt, 0);
   const withDebt = drivers.filter(d => d.pendingDebt > 0);
-  const withoutDebt = drivers.filter(d => d.pendingDebt === 0);
+  const todayTotal = todayOrders.reduce((s, o) => s + o.deliveryValue, 0);
+  const todayCompany = todayOrders.reduce((s, o) => s + o.companyAmount, 0);
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-black">Domiciliarios Shipday</h1>
-          <p className="text-sm text-muted-foreground">{drivers.length} domiciliarios · {withDebt.length} con deuda pendiente</p>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-black">Domiciliarios</h1>
+            <LiveBadge />
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {drivers.length} domiciliarios · {withDebt.length} con deuda
+          </p>
         </div>
         <div className="flex gap-2">
           <select
@@ -45,82 +87,111 @@ export default function DomiciliariosShipdayPage() {
             <option value="">Todas las sucursales</option>
             {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
-          <button onClick={load} className="p-2 rounded-xl border border-border hover:bg-secondary transition">
-            <RefreshCw className="h-4 w-4" />
+          <button onClick={load} className="p-2 rounded-xl border border-border hover:bg-secondary transition" title="Refrescar">
+            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
           </button>
         </div>
       </div>
 
-      {loading ? (
-        <div className="text-center py-20 text-muted-foreground">Cargando...</div>
-      ) : (
-        <div className="glass-strong rounded-3xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-muted-foreground text-xs uppercase">
-                <th className="text-left px-5 py-3">Domiciliario</th>
-                <th className="text-left px-5 py-3">Sucursal</th>
-                <th className="text-left px-5 py-3">Teléfono</th>
-                <th className="text-right px-5 py-3">Deuda pendiente</th>
-                <th className="text-center px-5 py-3">Estado</th>
-                <th className="px-5 py-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {drivers.map(d => (
-                <tr key={d.id} className="border-b border-border/50 hover:bg-secondary/30 transition">
-                  <td className="px-5 py-3 font-medium">{d.name}</td>
-                  <td className="px-5 py-3 text-muted-foreground">{d.branch.name}</td>
-                  <td className="px-5 py-3 text-muted-foreground">{d.phone ?? "—"}</td>
-                  <td className={`px-5 py-3 text-right font-bold tnum ${d.pendingDebt > 0 ? "text-red-500" : "text-muted-foreground"}`}>
-                    {d.pendingDebt > 0 ? formatCOP(d.pendingDebt) : "—"}
-                  </td>
-                  <td className="px-5 py-3 text-center">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${d.active ? "bg-green-100 text-green-700" : "bg-secondary text-muted-foreground"}`}>
-                      {d.active ? "Activo" : "Inactivo"}
-                    </span>
-                  </td>
-                  <td className="px-5 py-3">
-                    <button
-                      onClick={() => setSelected(d)}
-                      className="text-xs text-primary font-bold hover:underline"
-                    >
-                      Ver estado de cuenta
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {drivers.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="text-center py-12 text-muted-foreground">
-                    No hay domiciliarios. Sincroniza una sucursal primero.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {/* Top KPIs */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <KPI label="Deuda total pendiente" value={formatCOP(totalDebt)} icon={<AlertCircle className="h-4 w-4" />} highlight={totalDebt > 0} />
+        <KPI label="Pedidos hoy" value={String(todayOrders.length)} icon={<Package className="h-4 w-4" />} />
+        <KPI label="Valor entregado hoy" value={formatCOP(todayTotal)} icon={<Banknote className="h-4 w-4" />} />
+        <KPI label="% empresa hoy" value={formatCOP(todayCompany)} icon={<Wallet className="h-4 w-4" />} />
+      </div>
 
-      {withDebt.length > 0 && (
-        <div className="glass-strong rounded-3xl p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <AlertCircle className="h-5 w-5 text-red-500" />
-            <h3 className="font-bold text-red-600">Domiciliarios con deuda</h3>
+      {/* Pedidos de hoy — todos los domiciliarios */}
+      <div className="glass-strong rounded-3xl overflow-hidden">
+        <button
+          onClick={() => setShowTodayList(v => !v)}
+          className="w-full flex items-center justify-between px-5 py-4 hover:bg-secondary/30 transition"
+        >
+          <div className="text-left">
+            <h2 className="font-black">Pedidos de hoy — todos los domiciliarios</h2>
+            <p className="text-xs text-muted-foreground">
+              {todayOrders.length} pedidos · {todayByDriver.length} domiciliarios activos hoy
+            </p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {withDebt.map(d => (
-              <button
-                key={d.id}
-                onClick={() => setSelected(d)}
-                className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-50 text-red-700 text-sm font-bold hover:bg-red-100 transition"
-              >
-                {d.name} · <span className="tnum">{formatCOP(d.pendingDebt)}</span>
-              </button>
-            ))}
+          {showTodayList ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+        </button>
+
+        {showTodayList && (
+          <div className="border-t border-border">
+            {todayByDriver.length === 0 ? (
+              <p className="text-center py-10 text-sm text-muted-foreground">Aún no hay pedidos entregados hoy.</p>
+            ) : (
+              <div className="divide-y divide-border">
+                {todayByDriver.map(grp => (
+                  <DriverDayGroup key={grp.driverId} group={grp} />
+                ))}
+              </div>
+            )}
           </div>
+        )}
+      </div>
+
+      {/* Lista de domiciliarios */}
+      <div className="glass-strong rounded-3xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-border">
+          <h2 className="font-black">Domiciliarios</h2>
+          <p className="text-xs text-muted-foreground">Click en un domiciliario para ver estado de cuenta y registrar pago</p>
         </div>
-      )}
+        {loading && drivers.length === 0 ? (
+          <p className="text-center py-12 text-muted-foreground">Cargando...</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-muted-foreground text-xs uppercase border-b border-border">
+                  <th className="text-left px-5 py-3">Domiciliario</th>
+                  <th className="text-left px-5 py-3 hidden md:table-cell">Sucursal</th>
+                  <th className="text-right px-5 py-3">Pedidos hoy</th>
+                  <th className="text-right px-5 py-3 hidden sm:table-cell">$ entregado hoy</th>
+                  <th className="text-right px-5 py-3">Deuda pendiente</th>
+                  <th className="px-5 py-3" />
+                </tr>
+              </thead>
+              <tbody>
+                {drivers.map(d => {
+                  const stat = todayByDriver.find(g => g.driverId === d.id);
+                  return (
+                    <tr key={d.id} className="border-b border-border/50 hover:bg-secondary/30 transition cursor-pointer" onClick={() => setSelected(d)}>
+                      <td className="px-5 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className="h-9 w-9 rounded-full bg-primary/15 text-primary flex items-center justify-center font-black text-sm">
+                            {d.name.charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <p className="font-bold">{d.name}</p>
+                            <p className="text-xs text-muted-foreground">{d.phone ?? "Sin teléfono"} · {d.active ? "Activo" : "Inactivo"}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-5 py-3 text-muted-foreground hidden md:table-cell">{d.branch.name}</td>
+                      <td className="px-5 py-3 text-right font-bold tnum">{stat?.count ?? 0}</td>
+                      <td className="px-5 py-3 text-right tnum hidden sm:table-cell">{formatCOP(stat?.total ?? 0)}</td>
+                      <td className={`px-5 py-3 text-right font-black tnum ${d.pendingDebt > 0 ? "text-red-500" : "text-muted-foreground"}`}>
+                        {d.pendingDebt > 0 ? formatCOP(d.pendingDebt) : "—"}
+                      </td>
+                      <td className="px-5 py-3 text-right">
+                        <span className="text-xs text-primary font-bold">Ver / Pagar →</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {drivers.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="text-center py-12 text-muted-foreground">
+                      No hay domiciliarios. Sincroniza una sucursal primero.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {selected && (
         <DriverStatementModal driver={selected} onClose={() => setSelected(null)} onRefresh={load} />
@@ -129,98 +200,56 @@ export default function DomiciliariosShipdayPage() {
   );
 }
 
-function DriverStatementModal({ driver, onClose, onRefresh }: { driver: Driver; onClose: () => void; onRefresh: () => void }) {
-  const [statement, setStatement] = useState<api.DriverStatement | null>(null);
-  const [payAmount, setPayAmount] = useState("");
-  const [paying, setPaying] = useState(false);
-
-  useEffect(() => {
-    api.getDriverStatement(driver.id).then(setStatement).catch(() => toast.error("Error al cargar estado de cuenta"));
-  }, [driver.id]);
-
-  const handlePay = async () => {
-    const amount = parseInt(payAmount.replace(/\D/g, ""));
-    if (!amount || amount <= 0) { toast.error("Ingresa un monto válido"); return; }
-    setPaying(true);
-    try {
-      await api.registerPayment(driver.id, amount, "Pago de porcentaje");
-      toast.success(`Pago de ${formatCOP(amount)} registrado`);
-      setPayAmount("");
-      onRefresh();
-      const s = await api.getDriverStatement(driver.id);
-      setStatement(s);
-    } catch (err) { toast.error(String(err)); }
-    setPaying(false);
-  };
-
+function KPI({ label, value, icon, highlight }: { label: string; value: string; icon: React.ReactNode; highlight?: boolean }) {
   return (
-    <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="glass-strong rounded-3xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-black">Estado de cuenta — {driver.name}</h2>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">✕</button>
+    <div className={`glass-strong rounded-2xl p-4 ${highlight ? "ring-2 ring-red-500/30" : ""}`}>
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">{icon}<span>{label}</span></div>
+      <p className={`mt-1 font-black text-xl tnum ${highlight ? "text-red-600" : ""}`}>{value}</p>
+    </div>
+  );
+}
+
+function DriverDayGroup({ group }: { group: { driverId: string; name: string; count: number; total: number; company: number; orders: Order[] } }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <button onClick={() => setOpen(v => !v)} className="w-full flex items-center justify-between px-5 py-3 hover:bg-secondary/30 transition">
+        <div className="flex items-center gap-3">
+          <div className="h-8 w-8 rounded-full bg-primary/15 text-primary flex items-center justify-center font-black text-sm">
+            {group.name.charAt(0).toUpperCase()}
+          </div>
+          <div className="text-left">
+            <p className="font-bold">{group.name}</p>
+            <p className="text-xs text-muted-foreground">{group.count} pedidos · {formatCOP(group.total)} · empresa {formatCOP(group.company)}</p>
+          </div>
         </div>
-
-        {!statement ? (
-          <div className="text-center py-8 text-muted-foreground">Cargando...</div>
-        ) : (
-          <>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <Stat label="Total pedidos" value={String(statement.totalOrders)} />
-              <Stat label="Valor total" value={formatCOP(statement.totalValue)} />
-              <Stat label="% empresa (30%)" value={formatCOP(statement.totalCompany)} />
-              <Stat label="Deuda pendiente" value={formatCOP(statement.pendingDebt)} highlight={statement.pendingDebt > 0} />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <Stat label="Bases entregadas" value={formatCOP(statement.totalBasesGiven)} />
-              <Stat label="Bases pagadas" value={formatCOP(statement.totalBasesPaid)} />
-            </div>
-
-            {statement.pendingDebt > 0 && (
-              <div className="bg-red-50 rounded-2xl p-4 space-y-3">
-                <p className="font-bold text-red-700">Registrar pago de porcentaje</p>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="Ej: 50000"
-                    value={payAmount}
-                    onChange={e => setPayAmount(e.target.value)}
-                    className="flex-1 px-3 py-2 rounded-xl border border-border bg-background text-sm"
-                  />
-                  <button onClick={handlePay} disabled={paying} className="px-4 py-2 bg-primary text-primary-foreground rounded-xl font-bold hover:opacity-90 disabled:opacity-50 transition">
-                    {paying ? "..." : "Registrar pago"}
-                  </button>
-                </div>
+        {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+      </button>
+      {open && (
+        <div className="bg-secondary/20 px-5 py-2 space-y-1">
+          {[...group.orders].sort((a, b) => {
+            const ai = parseInt(a.orderNumber ?? "", 10);
+            const bi = parseInt(b.orderNumber ?? "", 10);
+            if (!Number.isNaN(ai) && !Number.isNaN(bi)) return ai - bi;
+            return (a.orderNumber ?? "").localeCompare(b.orderNumber ?? "");
+          }).map(o => (
+            <div key={o.id} className="flex items-center justify-between text-xs py-1.5">
+              <div className="flex gap-3 items-center">
+                <span className="text-muted-foreground tnum">
+                  {o.deliveredAt ? new Date(o.deliveredAt).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" }) : "—"}
+                </span>
+                <span>#{o.orderNumber ?? "—"}</span>
+                <span className="text-muted-foreground truncate max-w-[200px]">{o.customerName ?? ""}</span>
               </div>
-            )}
-
-            <div className="space-y-2">
-              <h3 className="font-bold text-sm text-muted-foreground uppercase tracking-wide">Últimos 10 pedidos</h3>
-              <div className="space-y-1">
-                {statement.orders.slice(0, 10).map(o => (
-                  <div key={o.id} className="flex justify-between text-sm py-1.5 px-3 rounded-lg bg-secondary/30">
-                    <span className="text-muted-foreground">{o.deliveredAt ? new Date(o.deliveredAt).toLocaleDateString("es-CO") : "—"} · #{o.orderNumber ?? "—"}</span>
-                    <div className="flex gap-4 tnum">
-                      <span>{formatCOP(o.deliveryValue)}</span>
-                      <span className="text-red-600 font-bold">-{formatCOP(o.companyAmount)}</span>
-                    </div>
-                  </div>
-                ))}
+              <div className="flex gap-4 tnum font-bold">
+                <span>{formatCOP(o.deliveryValue)}</span>
+                <span className="text-primary">+{formatCOP(o.companyAmount)}</span>
               </div>
             </div>
-          </>
-        )}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function Stat({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
-  return (
-    <div className="bg-secondary/40 rounded-2xl p-3">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={`font-black text-lg tnum ${highlight ? "text-red-600" : ""}`}>{value}</p>
-    </div>
-  );
-}
