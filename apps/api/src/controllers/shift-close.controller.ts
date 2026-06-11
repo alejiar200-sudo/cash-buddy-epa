@@ -15,14 +15,25 @@ export async function expectedForDate(req: Request, res: Response) {
 
 export async function register(req: Request, res: Response) {
   const actor = getActor(req);
-  // El monto esperado SIEMPRE lo calcula el servidor (efectivo del sistema para la
-  // fecha). Se ignora cualquier valor enviado por el cliente para que ningún
-  // trabajador pueda alterar cuánto efectivo debería haber.
   const date: string = req.body.date;
-  const { cash } = await getExpectedBalancesForDate(date);
+  const shift: string = req.body.shift;
+
+  // El monto esperado lo decide el SERVIDOR (no el cliente) para que ningún
+  // trabajador pueda alterarlo:
+  //  - MAÑANA (AM): efectivo esperado calculado de los movimientos del sistema.
+  //  - TARDE (PM): es una verificación → el esperado es lo que dejó/contó la mañana.
+  let expectedAmount: number;
+  if (shift === "PM") {
+    const shifts = await svc.getShiftsForDate(date);
+    const am = shifts.find(s => s.shift === "AM");
+    expectedAmount = am ? am.totalCounted : (await getExpectedBalancesForDate(date)).cash;
+  } else {
+    expectedAmount = (await getExpectedBalancesForDate(date)).cash;
+  }
+
   res.status(201).json(await svc.registerShift({
     ...req.body,
-    expectedAmount: cash,
+    expectedAmount,
     createdBy: actor.id,
     createdByName: actor.name,
   }));

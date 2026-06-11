@@ -17,7 +17,7 @@ function fmtDay(date: string) {
   return new Date(date + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "2-digit", month: "long" });
 }
 
-const SHIFT_LABELS = { AM: "☀️ Turno AM", PM: "🌙 Turno PM", close: "🔒 Cierre final" };
+const SHIFT_LABELS = { AM: "☀️ Turno mañana", PM: "🌙 Turno tarde (verificación)", close: "🔒 Cierre final" };
 
 export default function CajaPage() {
   const [shifts, setShifts] = useState<ShiftClose[]>([]);
@@ -42,7 +42,7 @@ export default function CajaPage() {
 
   const todayShifts = shifts.filter(s => s.date === today);
   const registeredSlots = new Set(todayShifts.map(s => s.shift));
-  const pendingSlots = (["AM", "PM", "close"] as const).filter(s => !registeredSlots.has(s));
+  const pendingSlots = (["AM", "PM"] as const).filter(s => !registeredSlots.has(s));
   const allDone = pendingSlots.length === 0;
   const hasDiscrepancy = todayShifts.some(s => s.difference !== 0);
 
@@ -58,7 +58,7 @@ export default function CajaPage() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-black">Caja</h1>
-          <p className="text-sm text-muted-foreground">Cierre de turnos AM, PM y final con conteo de denominaciones</p>
+          <p className="text-sm text-muted-foreground">Turno mañana y turno tarde (la tarde verifica lo que dejó la mañana)</p>
         </div>
         <button
           onClick={() => setWizardOpen(true)}
@@ -81,9 +81,10 @@ export default function CajaPage() {
           )}
         </div>
 
-        <div className="grid grid-cols-3 gap-3">
-          {(["AM", "PM", "close"] as const).map(slot => {
+        <div className="grid grid-cols-2 gap-3">
+          {(["AM", "PM"] as const).map(slot => {
             const s = todayShifts.find(t => t.shift === slot);
+            const isVerif = slot === "PM";
             return (
               <div
                 key={slot}
@@ -91,23 +92,28 @@ export default function CajaPage() {
                   s
                     ? s.difference === 0
                       ? "bg-green-500/10 border border-green-500/20"
-                      : "bg-amber-500/10 border border-amber-500/20"
+                      : "bg-red-500/10 border border-red-500/30"
                     : "bg-secondary/40 border border-dashed border-border"
                 }`}
                 onClick={!s ? () => setWizardOpen(true) : undefined}
               >
-                <div className="text-2xl">{slot === "AM" ? "☀️" : slot === "PM" ? "🌙" : "🔒"}</div>
-                <div className="font-bold text-sm mt-1">{slot === "close" ? "Cierre" : `Turno ${slot}`}</div>
+                <div className="text-2xl">{slot === "AM" ? "☀️" : "🌙"}</div>
+                <div className="font-bold text-sm mt-1">{slot === "AM" ? "Mañana" : "Tarde"}</div>
                 {s ? (
                   <>
-                    <div className={`text-xs mt-1 font-bold ${s.difference === 0 ? "text-green-600" : "text-amber-600"}`}>
-                      {s.difference === 0 ? "✓ Cuadrado" : `${s.difference > 0 ? "+" : ""}${formatCOP(s.difference)}`}
+                    <div className={`text-xs mt-1 font-bold ${s.difference === 0 ? "text-green-600" : "text-red-500"}`}>
+                      {isVerif
+                        ? (s.difference === 0 ? "✓ Caja completa" : "⚠️ Rectificar caja")
+                        : (s.difference === 0 ? "✓ Cuadrado" : `${s.difference > 0 ? "+" : ""}${formatCOP(s.difference)}`)}
                     </div>
                     <div className="text-xs text-muted-foreground mt-0.5 font-bold tnum">{formatCOP(s.totalCounted)}</div>
-                    {s.receivedBy && <div className="text-[10px] text-muted-foreground truncate mt-0.5">{s.receivedBy}</div>}
+                    {s.createdByName && <div className="text-[10px] text-muted-foreground truncate mt-0.5">por {s.createdByName}</div>}
+                    {isVerif && s.handedBy && <div className="text-[10px] text-muted-foreground truncate">verifica a {s.handedBy}</div>}
                   </>
                 ) : (
-                  <div className="text-xs text-muted-foreground/70 mt-1">Pendiente · clic para registrar</div>
+                  <div className="text-xs text-muted-foreground/70 mt-1">
+                    {isVerif ? "Verificar la mañana · clic" : "Pendiente · clic para registrar"}
+                  </div>
                 )}
               </div>
             );
@@ -120,7 +126,7 @@ export default function CajaPage() {
             className="mt-4 w-full py-3 bg-primary/10 text-primary rounded-xl text-sm font-bold hover:bg-primary/20 transition flex items-center justify-center gap-2"
           >
             <Clock className="h-4 w-4" />
-            Registrar {pendingSlots.map(s => s === "close" ? "Cierre" : `Turno ${s}`).join(" · ")}
+            Registrar {pendingSlots.map(s => s === "AM" ? "Mañana" : "Tarde").join(" · ")}
           </button>
         )}
       </div>
