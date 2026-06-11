@@ -75,26 +75,26 @@ async function getExpectedBalances(today: string, todayRange: { gte: Date; lte: 
     orderBy: { month: "desc" },
   });
 
+  // periodStart = MOMENTO del último cierre (no el mes siguiente). Así, apenas cierras,
+  // el saldo arranca con el capital del cierre, y CADA movimiento que registras después
+  // (aunque sea el mismo día/mes) se suma de inmediato. Sin cierres: inicio del mes actual.
   let baseCash: number;
   let baseBank: number;
-  let periodStartStr: string;
+  let periodStart: Date;
   if (lastClose) {
     baseCash = lastClose.initialCash ?? settings?.initialCash ?? 0;
     baseBank = lastClose.initialBank ?? settings?.initialBank ?? 0;
-    // El nuevo período empieza el primer día del mes SIGUIENTE al cerrado.
-    const [y, m] = lastClose.month.split("-").map(Number);
-    const next = new Date(Date.UTC(y, m, 1)); // m = mes siguiente (0-based +1)
-    periodStartStr = next.toISOString().slice(0, 10);
+    periodStart = lastClose.closedAt;
   } else {
     baseCash = settings?.initialCash ?? 0;
     baseBank = settings?.initialBank ?? 0;
-    periodStartStr = today.slice(0, 7) + "-01";
+    periodStart = new Date(today.slice(0, 7) + "-01T00:00:00.000Z");
   }
-  const cumRange = { gte: new Date(periodStartStr + "T00:00:00.000Z"), lte: todayRange.lte };
+  const cumRange = { gte: periodStart, lte: todayRange.lte };
 
   const [movements, bankTxs, convs, driverPayments, bases, clientPays] = await Promise.all([
-    // Movimientos de caja desde el inicio del período hasta la fecha (string YYYY-MM-DD)
-    prisma.movement.findMany({ where: { date: { gte: periodStartStr, lte: today }, status: "confirmed" }, select: { type: true, medium: true, amount: true } }),
+    // Caja: se cuentan los movimientos REGISTRADOS después del cierre (por createdAt).
+    prisma.movement.findMany({ where: { createdAt: cumRange, status: "confirmed" }, select: { type: true, medium: true, amount: true } }),
     prisma.bankTransaction.findMany({ where: { date: cumRange }, select: { type: true, medium: true, amount: true } }),
     prisma.conversion.findMany({ where: { date: cumRange }, select: { type: true, amount: true } }),
     prisma.driverPayment.findMany({ where: { date: cumRange }, select: { medium: true, amount: true } }),
