@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import * as svc from "../services/driver.service";
+import { getActor } from "../lib/actor";
 
 export async function list(req: Request, res: Response) {
   const branchId = req.query.branchId as string | undefined;
@@ -16,7 +17,7 @@ export async function statement(req: Request, res: Response) {
 
 export async function registerPayment(req: Request, res: Response) {
   const { amount, medium, notes } = req.body;
-  res.status(201).json(await svc.registerPayment(req.params.id, Number(amount), medium, notes));
+  res.status(201).json(await svc.registerPayment(req.params.id, Number(amount), medium, notes, getActor(req)));
 }
 
 export async function ordersToday(req: Request, res: Response) {

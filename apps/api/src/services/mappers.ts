@@ -17,6 +17,10 @@ export function toMovement(m: PrismaMovement): Movement {
     kind: m.kind,
     deliveryId: m.deliveryId,
     deliveryValue: m.deliveryValue,
+    createdBy: m.createdBy,
+    createdByName: m.createdByName,
+    approvedBy: m.approvedBy,
+    approvedByName: m.approvedByName,
   };
 }
 

@@ -56,6 +56,9 @@ export type UpdateWorkerRequest = Partial<CreateWorkerRequest>;
 
 export interface UpdateSettingsRequest {
   companyName?: string;
+  brandName?: string;
+  logoData?: string | null;
+  termsAcceptedAt?: string | null;
   initialCash?: number;
   initialBank?: number;
   setupComplete?: boolean;

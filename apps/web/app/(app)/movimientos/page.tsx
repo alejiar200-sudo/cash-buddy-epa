@@ -1,129 +1,236 @@
 "use client";
 
-import { useState } from "react";
-import { useStore, CATEGORY_LABEL, type Movement } from "@/lib/store";
-import { useDay } from "@/lib/day-context";
-import { Avatar } from "@/components/Avatar";
+import { useEffect, useState } from "react";
 import { formatCOP } from "@/lib/format";
-import { Search, Check, Trash2 } from "lucide-react";
+import { Search, TrendingUp, TrendingDown, RefreshCw, Pencil, Trash2 } from "lucide-react";
+import { toast } from "sonner";
+import * as api from "@/lib/sd-api";
+import type { UnifiedMovement } from "@/lib/sd-api";
+import { EditRequestWizard, type EditableField } from "@/components/wizards/EditRequestWizard";
+import { DeleteRequestWizard } from "@/components/wizards/DeleteRequestWizard";
+import { useLive } from "@/lib/use-live";
 
-type Filter = "all" | "cash" | "bank" | "pending" | "confirmed";
+type Filter = "all" | "ingreso" | "egreso" | "cash" | "bank";
+type SourceFilter = "all" | "Caja" | "Banco" | "Domiciliarios" | "Bases" | "Clientes" | "Conversión";
 
-export default function MovementsPage() {
-  const { state, getDay, updateMovement, deleteMovement } = useStore();
-  const { date } = useDay();
-  const day = getDay(date);
+const SOURCE_COLORS: Record<string, string> = {
+  "Caja":          "bg-gray-500/20 text-gray-700 dark:text-gray-300",
+  "Banco":         "bg-blue-500/20 text-blue-700 dark:text-blue-300",
+  "Domiciliarios": "bg-purple-500/20 text-purple-700 dark:text-purple-300",
+  "Bases":         "bg-amber-500/20 text-amber-700 dark:text-amber-300",
+  "Clientes":      "bg-green-500/20 text-green-700 dark:text-green-300",
+  "Conversión":    "bg-orange-500/20 text-orange-700 dark:text-orange-300",
+};
+
+export default function MovimientosPage() {
+  const [movements, setMovements] = useState<UnifiedMovement[]>([]);
+  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<Filter>("all");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [q, setQ] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [editMov, setEditMov] = useState<UnifiedMovement | null>(null);
+  const [deleteMov, setDeleteMov] = useState<UnifiedMovement | null>(null);
 
-  const filtered = day.movements
-    .slice()
-    .reverse()
-    .filter((m) => {
-      if (filter === "cash") return m.medium === "cash";
-      if (filter === "bank") return m.medium === "bank";
-      if (filter === "pending") return m.status === "pending";
-      if (filter === "confirmed") return m.status === "confirmed";
-      return true;
-    })
-    .filter((m) => {
-      if (!q) return true;
-      const w = state.workers.find((x) => x.id === m.workerId);
-      return (m.description ?? "").toLowerCase().includes(q.toLowerCase()) ||
-        (w?.name.toLowerCase().includes(q.toLowerCase()) ?? false);
-    });
+  const load = async (silent = false) => {
+    if (!silent) setLoading(true);
+    try {
+      const data = await api.getUnifiedMovements({
+        from: fromDate || undefined,
+        to: toDate || undefined,
+      });
+      setMovements(data);
+    } catch { if (!silent) toast.error("Error al cargar movimientos"); }
+    if (!silent) setLoading(false);
+  };
 
-  const chips: { id: Filter; label: string }[] = [
-    { id: "all", label: "Todos" },
-    { id: "cash", label: "💵 Efectivo" },
-    { id: "bank", label: "🏦 Banco" },
-    { id: "pending", label: "⏳ Pendientes" },
-    { id: "confirmed", label: "✅ Confirmados" },
-  ];
+  useEffect(() => { load(); }, [fromDate, toDate]);
+  useLive(() => load(true), 5000);
+
+  const filtered = movements.filter(m => {
+    if (filter === "ingreso" && m.type !== "ingreso") return false;
+    if (filter === "egreso" && m.type !== "egreso") return false;
+    if (filter === "cash" && m.medium !== "cash") return false;
+    if (filter === "bank" && m.medium !== "bank") return false;
+    if (sourceFilter !== "all" && m.source !== sourceFilter) return false;
+    if (q) {
+      const sq = q.toLowerCase();
+      if (!m.description.toLowerCase().includes(sq) &&
+          !m.category.toLowerCase().includes(sq) &&
+          !(m.relatedName ?? "").toLowerCase().includes(sq)) return false;
+    }
+    return true;
+  });
+
+  const totalIngresos = filtered.filter(m => m.type === "ingreso").reduce((s, m) => s + m.amount, 0);
+  const totalEgresos  = filtered.filter(m => m.type === "egreso").reduce((s, m) => s + m.amount, 0);
+  const balance = totalIngresos - totalEgresos;
+
+  const sources = [...new Set(movements.map(m => m.source))].filter(Boolean);
 
   return (
     <div className="space-y-5">
-      <h1 className="text-2xl font-bold">📋 Movimientos del día</h1>
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-black">📋 Movimientos</h1>
+          <p className="text-sm text-muted-foreground">Todos los movimientos de dinero del sistema</p>
+        </div>
+        <button onClick={() => load()} className="flex items-center gap-2 px-3 py-2 border border-border rounded-xl text-sm hover:bg-secondary transition">
+          <RefreshCw className="h-4 w-4" /> Actualizar
+        </button>
+      </div>
 
-      <div className="flex flex-wrap gap-2 items-center">
-        {chips.map(c => (
-          <button key={c.id} onClick={() => setFilter(c.id)} className={`px-4 py-2 rounded-full text-sm font-bold transition ${filter === c.id ? "bg-primary text-primary-foreground shadow-cash" : "bg-secondary text-foreground hover:bg-muted"}`}>
-            {c.label}
-          </button>
-        ))}
-        <div className="relative ml-auto">
-          <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por nombre…" className="pl-9 pr-4 py-2 glass rounded-xl outline-none text-sm w-64" />
+      {/* Resumen */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="glass-strong rounded-2xl p-4">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground"><TrendingUp className="h-3.5 w-3.5 text-green-600" /> Ingresos</div>
+          <div className="font-black text-xl text-green-600 tnum mt-1">{formatCOP(totalIngresos)}</div>
+        </div>
+        <div className="glass-strong rounded-2xl p-4">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground"><TrendingDown className="h-3.5 w-3.5 text-red-500" /> Egresos</div>
+          <div className="font-black text-xl text-red-500 tnum mt-1">{formatCOP(totalEgresos)}</div>
+        </div>
+        <div className="glass-strong rounded-2xl p-4">
+          <div className="text-xs text-muted-foreground">Balance</div>
+          <div className={`font-black text-xl tnum mt-1 ${balance >= 0 ? "text-primary" : "text-red-500"}`}>{formatCOP(balance)}</div>
         </div>
       </div>
 
-      <div className="glass-strong rounded-3xl overflow-hidden">
-        {filtered.length === 0 ? (
-          <div className="p-10 text-center text-muted-foreground">Sin movimientos aún hoy</div>
-        ) : (
-          <table className="w-full">
-            <thead>
-              <tr className="text-xs uppercase tracking-wider text-muted-foreground border-b border-border">
-                <th className="text-left p-3">Hora</th>
-                <th className="text-left p-3">Tipo</th>
-                <th className="text-left p-3">Descripción</th>
-                <th className="text-left p-3">Trabajador</th>
-                <th className="text-right p-3">Monto</th>
-                <th className="text-center p-3">Estado</th>
-                <th className="text-right p-3">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((m) => <Row key={m.id} m={m} date={date} update={updateMovement} del={deleteMovement} />)}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function Row({ m, date, update, del }: {
-  m: Movement;
-  date: string;
-  update: (date: string, id: string, patch: Partial<Movement>) => void;
-  del: (date: string, id: string) => void;
-}) {
-  const { state } = useStore();
-  const worker = state.workers.find(w => w.id === m.workerId);
-  const isPending = m.status === "pending";
-  const rowCls = isPending ? "bg-warn-soft/30" : "";
-  const amountCls = m.type === "ingreso" ? "text-cash" : "text-danger";
-  const sign = m.type === "ingreso" ? "+" : "-";
-  return (
-    <tr className={`border-b border-border/40 ${rowCls} animate-slide-in`}>
-      <td className="p-3 text-sm tnum text-muted-foreground">{m.time}</td>
-      <td className="p-3 text-sm">{m.medium === "cash" ? "💵" : "🏦"} {CATEGORY_LABEL[m.category]}</td>
-      <td className="p-3 text-sm">{m.description ?? "—"}</td>
-      <td className="p-3">
-        {worker ? (
-          <div className="flex items-center gap-2">
-            <Avatar worker={worker} size={24} />
-            <span className="text-sm">{worker.name}</span>
+      {/* Filtros */}
+      <div className="space-y-2">
+        {/* Tipo + medio */}
+        <div className="flex flex-wrap gap-2 items-center">
+          {(["all", "ingreso", "egreso", "cash", "bank"] as Filter[]).map(f => (
+            <button key={f} onClick={() => setFilter(f)}
+              className={`px-3 py-1.5 rounded-xl text-sm font-medium transition ${filter === f ? "bg-primary text-primary-foreground" : "border border-border hover:bg-secondary"}`}>
+              {f === "all" ? "Todos" : f === "ingreso" ? "↑ Ingresos" : f === "egreso" ? "↓ Egresos" : f === "cash" ? "💵 Efectivo" : "🏦 Banco"}
+            </button>
+          ))}
+          <div className="relative ml-auto">
+            <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar…"
+              className="pl-9 pr-4 py-2 glass rounded-xl outline-none text-sm w-56" />
           </div>
-        ) : "—"}
-      </td>
-      <td className={`p-3 text-right font-black tnum ${amountCls}`}>{sign}{formatCOP(m.amount)}</td>
-      <td className="p-3 text-center">
-        {isPending
-          ? <span className="text-xs bg-warn-soft text-warn px-2 py-1 rounded-full font-bold">⏳ Pendiente</span>
-          : <span className="text-xs bg-cash-soft text-cash px-2 py-1 rounded-full font-bold">✅ Confirmado</span>}
-      </td>
-      <td className="p-3 text-right space-x-1">
-        {isPending && (
-          <button onClick={() => update(date, m.id, { status: "confirmed" })} className="inline-flex items-center gap-1 bg-primary text-primary-foreground text-xs font-bold px-3 py-1.5 rounded-lg">
-            <Check className="h-3 w-3" /> Recibí
-          </button>
-        )}
-        <button onClick={() => del(date, m.id)} className="inline-flex items-center text-danger p-1.5 hover:bg-danger-soft rounded-lg">
-          <Trash2 className="h-4 w-4" />
-        </button>
-      </td>
-    </tr>
+        </div>
+
+        {/* Por origen */}
+        <div className="flex flex-wrap gap-2 items-center">
+          <span className="text-xs text-muted-foreground font-medium">Origen:</span>
+          {(["all", ...sources] as (SourceFilter | string)[]).map(s => (
+            <button key={s} onClick={() => setSourceFilter(s as SourceFilter)}
+              className={`px-3 py-1 rounded-xl text-xs font-medium transition ${sourceFilter === s ? "bg-primary text-primary-foreground" : "border border-border hover:bg-secondary"}`}>
+              {s === "all" ? "Todos" : s}
+            </button>
+          ))}
+        </div>
+
+        {/* Fechas */}
+        <div className="flex gap-2">
+          <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
+            className="px-3 py-2 rounded-xl border border-border bg-background text-sm" />
+          <input type="date" value={toDate} onChange={e => setToDate(e.target.value)}
+            className="px-3 py-2 rounded-xl border border-border bg-background text-sm" />
+          {(fromDate || toDate) && (
+            <button onClick={() => { setFromDate(""); setToDate(""); }}
+              className="px-3 py-2 rounded-xl border border-border text-sm hover:bg-secondary transition">✕</button>
+          )}
+        </div>
+      </div>
+
+      {/* Lista */}
+      {loading ? (
+        <div className="text-center py-16 text-muted-foreground">Cargando movimientos…</div>
+      ) : filtered.length === 0 ? (
+        <div className="glass-strong rounded-3xl p-10 text-center text-muted-foreground">
+          <p className="text-3xl mb-3">📭</p>
+          <p className="font-bold">Sin movimientos que coincidan</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filtered.map(m => (
+            <div key={m.id} className="glass-strong rounded-2xl px-4 py-3 flex items-center gap-4">
+              {/* Indicador tipo */}
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${m.type === "ingreso" ? "bg-green-500/10" : "bg-red-500/10"}`}>
+                {m.type === "ingreso"
+                  ? <TrendingUp className="h-4 w-4 text-green-600" />
+                  : <TrendingDown className="h-4 w-4 text-red-500" />}
+              </div>
+
+              {/* Info */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="font-medium text-sm truncate">{m.description}</p>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold shrink-0 ${SOURCE_COLORS[m.source] ?? "bg-secondary text-muted-foreground"}`}>
+                    {m.source}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {m.date} {m.time}
+                  {m.relatedName ? ` · ${m.relatedName}` : ""}
+                  {" · "}{m.category}
+                  {" · "}{m.medium === "cash" ? "💵 Efectivo" : "🏦 Banco"}
+                </p>
+              </div>
+
+              {/* Monto */}
+              <span className={`font-black text-base tnum shrink-0 ${m.type === "ingreso" ? "text-green-600" : "text-red-500"}`}>
+                {m.type === "ingreso" ? "+" : "−"}{formatCOP(m.amount)}
+              </span>
+
+              {/* Botones de solicitud: corregir o eliminar */}
+              <div className="flex items-center gap-0.5 shrink-0">
+                <button
+                  onClick={() => setEditMov(m)}
+                  title="Solicitar corrección de este movimiento"
+                  className="p-1.5 rounded-lg hover:bg-secondary transition text-muted-foreground hover:text-primary"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={() => setDeleteMov(m)}
+                  title="Solicitar eliminación de este movimiento"
+                  className="p-1.5 rounded-lg hover:bg-secondary transition text-muted-foreground hover:text-red-500"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          ))}
+          <p className="text-xs text-muted-foreground text-center pt-2">{filtered.length} movimientos · mostrando los más recientes</p>
+        </div>
+      )}
+
+      {/* Wizard de solicitud de cambio para cualquier movimiento */}
+      {editMov && (
+        <EditRequestWizard
+          open={true}
+          onOpenChange={(v) => { if (!v) setEditMov(null); }}
+          entityType={editMov.entityType}
+          entityId={editMov.entityId}
+          entityLabel={`${editMov.category} · ${formatCOP(editMov.amount)}${editMov.relatedName ? ` · ${editMov.relatedName}` : ""}`}
+          fields={[
+            { field: "amount", label: "Valor", currentValue: String(editMov.amount), type: "money" },
+            ...(editMov.editableDescription
+              ? [{ field: "description", label: "Descripción", currentValue: editMov.description, type: "text" as const }]
+              : []),
+          ] as EditableField[]}
+          onDone={() => load()}
+        />
+      )}
+
+      {/* Wizard de solicitud de eliminación */}
+      {deleteMov && (
+        <DeleteRequestWizard
+          open={true}
+          onOpenChange={(v) => { if (!v) setDeleteMov(null); }}
+          entityType={deleteMov.entityType}
+          entityId={deleteMov.entityId}
+          entityLabel={`${deleteMov.category} · ${formatCOP(deleteMov.amount)}${deleteMov.relatedName ? ` · ${deleteMov.relatedName}` : ""}`}
+          onDone={() => load()}
+        />
+      )}
+    </div>
   );
 }

@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import * as svc from "../services/conversion.service";
+import { getActor } from "../lib/actor";
 
 export async function list(req: Request, res: Response) {
   const { branchId, from, to } = req.query as Record<string, string>;
@@ -7,8 +8,8 @@ export async function list(req: Request, res: Response) {
 }
 
 export async function create(req: Request, res: Response) {
-  const userId = (req as Request & { user?: { id: string } }).user?.id;
-  res.status(201).json(await svc.createConversion({ ...req.body, userId }));
+  const actor = getActor(req);
+  res.status(201).json(await svc.createConversion({ ...req.body, userId: actor.id ?? undefined, userName: actor.name ?? undefined }));
 }
 
 export async function remove(req: Request, res: Response) {

@@ -1,0 +1,23 @@
+import type { Request, Response } from "express";
+import * as svc from "../services/bank-transaction.service";
+import { getActor } from "../lib/actor";
+
+export async function list(req: Request, res: Response) {
+  const { type, from, to } = req.query as Record<string, string>;
+  res.json(await svc.list({ type: type as "ingreso" | "egreso" | undefined, from, to }));
+}
+
+export async function create(req: Request, res: Response) {
+  const actor = getActor(req);
+  res.status(201).json(await svc.create({ ...req.body, createdBy: actor.id, createdByName: actor.name }));
+}
+
+export async function remove(req: Request, res: Response) {
+  await svc.remove(req.params.id);
+  res.json({ ok: true });
+}
+
+export async function summary(req: Request, res: Response) {
+  const { from, to } = req.query as Record<string, string>;
+  res.json(await svc.summary(from, to));
+}

@@ -67,6 +67,7 @@ interface Ctx {
   ) => Promise<Movement>;
   updateMovement: (date: string, id: string, patch: Partial<Movement>) => Promise<void>;
   deleteMovement: (date: string, id: string) => Promise<void>;
+  refreshDay: (date: string) => Promise<void>;
   addWorker: (w: Omit<Worker, "id" | "color"> & { color?: string }) => Promise<void>;
   updateWorker: (id: string, patch: Partial<Worker>) => Promise<void>;
   removeWorker: (id: string) => Promise<void>;
@@ -262,6 +263,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       addMovement,
       updateMovement,
       deleteMovement,
+      refreshDay,
       addWorker,
       updateWorker,
       removeWorker,
@@ -269,7 +271,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setArqueo,
       resetAll,
     }),
-    [state, loading, getDay, ensureDay, addMovement, updateMovement, deleteMovement, addWorker, updateWorker, removeWorker, updateSettings, setArqueo, resetAll],
+    [state, loading, getDay, ensureDay, addMovement, updateMovement, deleteMovement, refreshDay, addWorker, updateWorker, removeWorker, updateSettings, setArqueo, resetAll],
   );
 
   return <StoreCtx.Provider value={value}>{children}</StoreCtx.Provider>;

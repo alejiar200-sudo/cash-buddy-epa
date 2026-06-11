@@ -83,7 +83,7 @@ export function DriverStatementModal({ driver, onClose, onRefresh }: Props) {
             </div>
 
             {/* Pago */}
-            <div className={`rounded-2xl p-4 space-y-3 ${totalOwed > 0 ? "bg-red-50" : "bg-secondary/40"}`}>
+            <div className={`rounded-2xl p-4 space-y-3 ${totalOwed > 0 ? "bg-red-500/10 border border-red-500/20" : "bg-secondary/40"}`}>
               <div className="flex items-center justify-between">
                 <p className={`font-bold ${totalOwed > 0 ? "text-red-700" : ""}`}>
                   {totalOwed > 0 ? "Registrar pago (parcial o total)" : "Sin deuda pendiente"}
@@ -102,8 +102,10 @@ export function DriverStatementModal({ driver, onClose, onRefresh }: Props) {
                 <button
                   type="button"
                   onClick={() => setPayMedium("cash")}
-                  className={`flex items-center justify-center gap-2 py-2.5 rounded-xl border font-bold text-sm transition ${
-                    payMedium === "cash" ? "bg-emerald-500 text-white border-emerald-500" : "border-border hover:bg-secondary"
+                  className={`flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 font-bold text-sm transition ${
+                    payMedium === "cash"
+                      ? "bg-emerald-500 text-white border-emerald-500"
+                      : "border-border bg-secondary/60 text-foreground hover:border-emerald-500 hover:bg-emerald-500/10"
                   }`}
                 >
                   <Banknote className="h-4 w-4" /> Efectivo
@@ -111,8 +113,10 @@ export function DriverStatementModal({ driver, onClose, onRefresh }: Props) {
                 <button
                   type="button"
                   onClick={() => setPayMedium("bank")}
-                  className={`flex items-center justify-center gap-2 py-2.5 rounded-xl border font-bold text-sm transition ${
-                    payMedium === "bank" ? "bg-sky-500 text-white border-sky-500" : "border-border hover:bg-secondary"
+                  className={`flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 font-bold text-sm transition ${
+                    payMedium === "bank"
+                      ? "bg-sky-500 text-white border-sky-500"
+                      : "border-border bg-secondary/60 text-foreground hover:border-sky-400 hover:bg-sky-500/10"
                   }`}
                 >
                   <Wallet className="h-4 w-4" /> Transferencia
@@ -205,9 +209,9 @@ export function DriverStatementModal({ driver, onClose, onRefresh }: Props) {
 
 function Stat({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
-    <div className={`rounded-2xl p-3 ${highlight ? "bg-red-100" : "bg-secondary/40"}`}>
+    <div className={`rounded-2xl p-3 ${highlight ? "bg-red-500/10 border border-red-500/20" : "bg-secondary/40"}`}>
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={`font-black text-lg tnum ${highlight ? "text-red-600" : ""}`}>{value}</p>
+      <p className={`font-black text-lg tnum ${highlight ? "text-red-500" : ""}`}>{value}</p>
     </div>
   );
 }

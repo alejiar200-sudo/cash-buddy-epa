@@ -22,11 +22,20 @@ export async function createConversion(input: {
   type: "banco_a_efectivo" | "efectivo_a_banco";
   notes?: string;
   userId?: string;
+  userName?: string;
+  driverId?: string;
   date?: string;
 }) {
   const branch = await prisma.branch.findUnique({ where: { id: input.branchId } });
   if (!branch) throw notFound("Sucursal no encontrada");
   if (input.amount <= 0) throw badRequest("El monto debe ser mayor a 0");
+
+  // El domiciliario es solo informativo: NO altera su deuda.
+  let driverName: string | undefined;
+  if (input.driverId) {
+    const driver = await prisma.driver.findUnique({ where: { id: input.driverId } });
+    driverName = driver?.name;
+  }
 
   return prisma.conversion.create({
     data: {
@@ -35,6 +44,9 @@ export async function createConversion(input: {
       type: input.type,
       notes: input.notes,
       userId: input.userId,
+      userName: input.userName,
+      driverId: input.driverId,
+      driverName,
       date: input.date ? new Date(input.date) : new Date(),
     },
     include: { branch: { select: { id: true, name: true } } },

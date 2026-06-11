@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, Plus, FileSpreadsheet, Lock } from "lucide-react";
+import { Download, FileSpreadsheet, Lock } from "lucide-react";
+import Link from "next/link";
 import { toast } from "sonner";
 import * as api from "@/lib/sd-api";
-import type { Branch, MonthlyClose } from "@/lib/sd-api";
+import type { Branch, MonthlyClose, MonthlyReport } from "@/lib/sd-api";
 import { formatCOP } from "@/lib/format";
+import { MonthlyCloseWizard } from "@/components/wizards/MonthlyCloseWizard";
+import { useLive } from "@/lib/use-live";
 
 export default function ReportesPage() {
   const [closes, setCloses] = useState<MonthlyClose[]>([]);
@@ -13,34 +16,30 @@ export default function ReportesPage() {
   const [branchId, setBranchId] = useState("");
   const [loading, setLoading] = useState(true);
   const [showClose, setShowClose] = useState(false);
-  const [closeMonth, setCloseMonth] = useState(() => new Date().toISOString().slice(0, 7));
-  const [closeBranch, setCloseBranch] = useState("");
-  const [closing, setClosing] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
+  const [reportMonth, setReportMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [report, setReport] = useState<MonthlyReport | null>(null);
 
-  const load = async () => {
-    setLoading(true);
+  const load = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const [c, b] = await Promise.all([api.getCloses(branchId || undefined), api.getBranches()]);
-      setCloses(c);
-      setBranches(b);
-    } catch { toast.error("Error al cargar cierres"); }
-    setLoading(false);
+      setCloses(prev => JSON.stringify(prev) === JSON.stringify(c) ? prev : c);
+      setBranches(prev => JSON.stringify(prev) === JSON.stringify(b) ? prev : b);
+    } catch { if (!silent) toast.error("Error al cargar cierres"); }
+    if (!silent) setLoading(false);
+  };
+
+  const loadReport = async () => {
+    try {
+      const r = await api.getMonthlyReport(reportMonth, branchId || undefined);
+      setReport(prev => JSON.stringify(prev) === JSON.stringify(r) ? prev : r);
+    } catch { setReport(null); }
   };
 
   useEffect(() => { load(); }, [branchId]);
-
-  const handleClose = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setClosing(true);
-    try {
-      await api.createClose(closeMonth, closeBranch || undefined);
-      toast.success(`Cierre de ${closeMonth} generado`);
-      setShowClose(false);
-      load();
-    } catch (err) { toast.error(String(err)); }
-    setClosing(false);
-  };
+  useEffect(() => { loadReport(); }, [reportMonth, branchId]);
+  useLive(() => { load(true); loadReport(); }, 6000);
 
   const handleExport = async (month: string, bid?: string) => {
     const key = month + (bid ?? "global");
@@ -53,29 +52,39 @@ export default function ReportesPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-3xl mx-auto w-full">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-black">Reportes y Cierres Mensuales</h1>
           <p className="text-sm text-muted-foreground">Genera cierres y exporta reportes en Excel</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => handleExport(new Date().toISOString().slice(0, 7), branchId || undefined)}
-            className="flex items-center gap-2 px-3 py-2 border border-border rounded-xl text-sm font-bold hover:bg-secondary transition">
+          <button
+            onClick={() => handleExport(new Date().toISOString().slice(0, 7), branchId || undefined)}
+            className="flex items-center gap-2 px-3 py-2 border border-border rounded-xl text-sm font-bold hover:bg-secondary transition"
+          >
             <Download className="h-4 w-4" /> Excel este mes
           </button>
-          <button onClick={() => setShowClose(true)} className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl font-bold hover:opacity-90 transition">
+          <button
+            onClick={() => setShowClose(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl font-bold hover:opacity-90 transition"
+          >
             <Lock className="h-4 w-4" /> Cerrar mes
           </button>
         </div>
       </div>
 
-      <div className="flex gap-3">
+      <div className="flex gap-3 flex-wrap items-center">
         <select value={branchId} onChange={e => setBranchId(e.target.value)} className="px-3 py-2 rounded-xl border border-border bg-background text-sm">
           <option value="">Todas las sucursales</option>
           {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
         </select>
+        <input type="month" value={reportMonth} onChange={e => setReportMonth(e.target.value)}
+          className="px-3 py-2 rounded-xl border border-border bg-background text-sm" />
       </div>
+
+      {/* Reporte mensual estilo Excel */}
+      {report && <MonthlyReportPanel report={report} />}
 
       {loading ? (
         <div className="text-center py-20 text-muted-foreground">Cargando...</div>
@@ -101,6 +110,11 @@ export default function ReportesPage() {
                 <p className="text-xs text-muted-foreground mt-1">
                   Cerrado el {new Date(c.closedAt).toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" })}
                 </p>
+                {(c.initialCash != null || c.initialBank != null) && (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Inicio: efectivo {formatCOP(c.initialCash ?? 0)} · banco {formatCOP(c.initialBank ?? 0)}
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-3 md:grid-cols-6 gap-3 text-center">
@@ -125,35 +139,12 @@ export default function ReportesPage() {
         </div>
       )}
 
-      {showClose && (
-        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="glass-strong rounded-3xl p-6 w-full max-w-sm space-y-4">
-            <h2 className="font-black text-lg">Cerrar mes</h2>
-            <p className="text-sm text-muted-foreground">Se calculará el resumen completo del período seleccionado. Esta acción no puede deshacerse.</p>
-            <form onSubmit={handleClose} className="space-y-3">
-              <div>
-                <label className="text-xs text-muted-foreground font-medium">Período (mes)</label>
-                <input type="month" value={closeMonth} onChange={e => setCloseMonth(e.target.value)} required
-                  className="w-full mt-1 px-3 py-2.5 rounded-xl border border-border bg-background text-sm" />
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground font-medium">Sucursal (opcional — vacío = global)</label>
-                <select value={closeBranch} onChange={e => setCloseBranch(e.target.value)}
-                  className="w-full mt-1 px-3 py-2.5 rounded-xl border border-border bg-background text-sm">
-                  <option value="">Global (todas las sucursales)</option>
-                  {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                </select>
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => setShowClose(false)} className="flex-1 py-2.5 rounded-xl border border-border hover:bg-secondary transition">Cancelar</button>
-                <button type="submit" disabled={closing} className="flex-1 py-2.5 rounded-xl bg-primary text-primary-foreground font-bold hover:opacity-90 disabled:opacity-50 transition">
-                  {closing ? "Procesando..." : "Generar cierre"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <MonthlyCloseWizard
+        open={showClose}
+        onOpenChange={setShowClose}
+        branches={branches}
+        onDone={load}
+      />
     </div>
   );
 }
@@ -163,6 +154,126 @@ function CloseMetric({ label, value, highlight, warn }: { label: string; value: 
     <div className="bg-secondary/30 rounded-xl p-2.5 min-w-[90px]">
       <p className="text-xs text-muted-foreground leading-tight">{label}</p>
       <p className={`font-black text-sm tnum mt-0.5 ${highlight ? "text-primary" : warn ? "text-red-500" : ""}`}>{value}</p>
+    </div>
+  );
+}
+
+function MonthlyReportPanel({ report }: { report: MonthlyReport }) {
+  const fmt = (n: number) => formatCOP(n);
+  return (
+    <div className="glass-strong rounded-3xl p-5 space-y-4">
+      <h2 className="font-black text-lg">📊 Reporte del mes — {report.month}</h2>
+
+      {/* Bloque de resultados */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <RepCard label="Total Ventas (comisión)" value={fmt(report.totalSales)} accent />
+        <RepCard label="Total Gastos" value={fmt(report.expenses.total)} sub={`💵 ${fmt(report.expenses.cash)} · 🏦 ${fmt(report.expenses.bank)}`} />
+        <RepCard label="Total Nómina" value={fmt(report.payroll.total)} sub={`💵 ${fmt(report.payroll.cash)} · 🏦 ${fmt(report.payroll.bank)}`} />
+      </div>
+
+      {/* Indicadores que deben cuadrar — con enlaces directos al descuadre */}
+      <div className="space-y-2">
+        <BalanceRow
+          label="Diferencia Bases"
+          ok={report.bases.ok}
+          value={report.bases.diff}
+          detail={!report.bases.ok ? `Entregadas ${fmt(report.bases.given)} − Devueltas ${fmt(report.bases.returned)}` : undefined}
+          items={report.bases.pendingDrivers.map(d => ({ id: d.id, label: d.name, amount: d.pendingDebt }))}
+          linkHref="/shipday/bases"
+          linkLabel="Ir a Bases →"
+          itemHint="Domiciliarios que aún no devuelven la base:"
+        />
+        <BalanceRow
+          label="Comisiones pendientes"
+          ok={report.commission.ok}
+          value={report.commission.pending}
+          detail={!report.commission.ok ? "Domiciliarios que aún deben comisión de sus domicilios" : undefined}
+          items={report.commission.pendingDrivers.map(d => ({ id: d.id, label: d.name, amount: d.pendingDebt }))}
+          linkHref="/shipday/deudas"
+          linkLabel="Ir a Deudas →"
+          itemHint="Domiciliarios que deben comisión:"
+        />
+        <BalanceRow
+          label="Diferencia Transferencias"
+          ok={report.transfers.ok}
+          value={report.transfers.diff}
+          detail={!report.transfers.ok ? `Ingresos banco ${fmt(report.transfers.ingresos)} − Salidas banco ${fmt(report.transfers.egresos)}. Falta registrar la contraparte de algún movimiento.` : undefined}
+          linkHref="/banco"
+          linkLabel="Ir a Banco a cuadrar →"
+        />
+        <BalanceRow
+          label="Saldo Deudas Clientes"
+          ok={report.clientDebt.ok}
+          value={report.clientDebt.balance}
+          detail={!report.clientDebt.ok ? `Generadas ${fmt(report.clientDebt.generated)} − Pagadas ${fmt(report.clientDebt.paid)}` : undefined}
+          items={report.clientDebt.pendingClients.map(c => ({ id: c.id, label: c.name, amount: c.pendingDebt }))}
+          linkHref="/clientes"
+          linkLabel="Ir a Clientes →"
+          itemHint="Clientes con saldo pendiente:"
+        />
+      </div>
+
+      {/* Utilidad y rentabilidad */}
+      <div className="grid grid-cols-2 gap-3 pt-2 border-t border-border">
+        <div className="rounded-2xl p-4 bg-primary/10">
+          <p className="text-xs text-muted-foreground">Utilidad Neta</p>
+          <p className={`font-black text-2xl tnum mt-1 ${report.netProfit >= 0 ? "text-green-600" : "text-red-500"}`}>{fmt(report.netProfit)}</p>
+          <p className="text-[11px] text-muted-foreground mt-1">Ventas − Gastos − Nómina</p>
+        </div>
+        <div className="rounded-2xl p-4 bg-secondary/40">
+          <p className="text-xs text-muted-foreground">Rentabilidad</p>
+          <p className={`font-black text-2xl tnum mt-1 ${report.profitability >= 0 ? "text-primary" : "text-red-500"}`}>{report.profitability.toFixed(1)}%</p>
+          <p className="text-[11px] text-muted-foreground mt-1">(Utilidad / Ventas) × 100</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RepCard({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: boolean }) {
+  return (
+    <div className="rounded-2xl p-4 bg-secondary/40">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className={`font-black text-xl tnum mt-1 ${accent ? "text-primary" : ""}`}>{value}</p>
+      {sub && <p className="text-[11px] text-muted-foreground mt-1">{sub}</p>}
+    </div>
+  );
+}
+
+function BalanceRow({ label, ok, value, detail, items, linkHref, linkLabel, itemHint }: {
+  label: string; ok: boolean; value: number; detail?: string;
+  items?: { id: string; label: string; amount: number }[];
+  linkHref?: string; linkLabel?: string; itemHint?: string;
+}) {
+  return (
+    <div className={`rounded-2xl p-3 ${ok ? "bg-green-500/10 border border-green-500/20" : "bg-red-500/10 border border-red-500/20"}`}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-medium">{label}</span>
+        <div className="flex items-center gap-2">
+          {!ok && linkHref && (
+            <Link href={linkHref} className="text-xs font-bold text-primary hover:underline whitespace-nowrap">
+              {linkLabel}
+            </Link>
+          )}
+          <span className={`font-black tnum ${ok ? "text-green-600" : "text-red-500"}`}>
+            {ok ? "✅ $0" : `❌ ${formatCOP(value)}`}
+          </span>
+        </div>
+      </div>
+      {!ok && detail && <p className="text-xs text-red-600/80 dark:text-red-400/80 mt-1.5">{detail}</p>}
+      {/* Lista de dónde está el dinero faltante — cada item enlaza a su origen */}
+      {!ok && items && items.length > 0 && (
+        <div className="mt-2 space-y-1">
+          {itemHint && <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">{itemHint}</p>}
+          {items.slice(0, 8).map(it => (
+            <Link key={it.id} href={linkHref ?? "#"}
+              className="flex items-center justify-between text-xs px-3 py-1.5 rounded-lg bg-background/60 hover:bg-background transition">
+              <span className="font-medium">{it.label}</span>
+              <span className="font-black text-red-500 tnum">{formatCOP(it.amount)}</span>
+            </Link>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

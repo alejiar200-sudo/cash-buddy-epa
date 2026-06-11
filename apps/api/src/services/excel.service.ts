@@ -1,13 +1,129 @@
 import ExcelJS from "exceljs";
 import { prisma } from "../lib/prisma";
+import { getMonthlyReport } from "./close.service";
 
 function monthRange(month: string) {
   const [y, m] = month.split("-").map(Number);
-  return { gte: new Date(y, m - 1, 1), lte: new Date(y, m, 0, 23, 59, 59) };
+  const start = new Date(`${y}-${String(m).padStart(2, "0")}-01T00:00:00.000Z`);
+  const lastDay = new Date(y, m, 0).getDate();
+  const end = new Date(`${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}T23:59:59.999Z`);
+  return { gte: start, lte: end };
 }
 
 function cop(n: number) {
   return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(n);
+}
+
+/**
+ * Construye la hoja "CIERRE MES" replicando la estructura del Excel manual de la empresa,
+ * pero con los datos reales del sistema (getMonthlyReport + desglose por categoría).
+ */
+async function buildCierreMesSheet(wb: ExcelJS.Workbook, month: string, branchId?: string) {
+  const range = monthRange(month);
+  const monthPrefix = month;
+
+  const [report, gEf, gBk, nEf, nBk, baseGiven, basePaid, bankIn, bankOut] = await Promise.all([
+    getMonthlyReport(month, branchId),
+    prisma.movement.aggregate({ where: { category: 3, status: "confirmed", date: { startsWith: monthPrefix } }, _sum: { amount: true } }),
+    prisma.movement.aggregate({ where: { category: 4, status: "confirmed", date: { startsWith: monthPrefix } }, _sum: { amount: true } }),
+    prisma.movement.aggregate({ where: { category: 15, status: "confirmed", date: { startsWith: monthPrefix } }, _sum: { amount: true } }),
+    prisma.movement.aggregate({ where: { category: { in: [16, 18] }, status: "confirmed", date: { startsWith: monthPrefix } }, _sum: { amount: true } }),
+    prisma.baseTransaction.aggregate({ where: { type: "entrega", date: range, ...(branchId ? { branchId } : {}) }, _sum: { cashAmount: true, bankAmount: true, amount: true } }),
+    prisma.baseTransaction.aggregate({ where: { type: "pago", date: range, ...(branchId ? { branchId } : {}) }, _sum: { cashAmount: true, bankAmount: true, amount: true } }),
+    prisma.bankTransaction.aggregate({ where: { type: "ingreso", date: range }, _sum: { amount: true } }),
+    prisma.bankTransaction.aggregate({ where: { type: "egreso", date: range }, _sum: { amount: true } }),
+  ]);
+
+  const ws = wb.addWorksheet("CIERRE MES");
+  ws.columns = [
+    { key: "a", width: 32 }, { key: "b", width: 16 }, { key: "c", width: 16 },
+    { key: "d", width: 4 }, { key: "e", width: 28 }, { key: "f", width: 18 },
+  ];
+
+  const money = '"$"#,##0';
+  const titleFill = (argb: string): Partial<ExcelJS.Style> => ({
+    font: { bold: true, color: { argb: "FFFFFFFF" } },
+    fill: { type: "pattern", pattern: "solid", fgColor: { argb } },
+    alignment: { horizontal: "center" },
+  });
+
+  // ── Encabezado ──
+  ws.mergeCells("A1:C1");
+  ws.getCell("A1").value = `CAJA ${month}`;
+  Object.assign(ws.getCell("A1"), titleFill("FF2E7D32"));
+  ws.mergeCells("E1:F1");
+  ws.getCell("E1").value = "CIERRE MES";
+  Object.assign(ws.getCell("E1"), titleFill("FF1565C0"));
+
+  // ── Columna izquierda: movimientos del mes por categoría ──
+  ws.getCell("A2").value = "CONCEPTO"; ws.getCell("B2").value = "EFECTIVO"; ws.getCell("C2").value = "BANCO";
+  ["A2", "B2", "C2"].forEach(c => Object.assign(ws.getCell(c), titleFill("FF455A64")));
+
+  const givenCash = baseGiven._sum.cashAmount ?? 0;
+  const givenBank = baseGiven._sum.bankAmount ?? 0;
+  const givenTotal = baseGiven._sum.amount ?? 0;
+  const paidCash = basePaid._sum.cashAmount ?? 0;
+  const paidBank = basePaid._sum.bankAmount ?? 0;
+  const paidTotal = basePaid._sum.amount ?? 0;
+
+  const leftRows: [string, number | string, number | string][] = [
+    ["1-Domicilios (comisión)", report.totalSales, ""],
+    ["3-Gastos Efectivo / 4-Banco", gEf._sum.amount ?? 0, gBk._sum.amount ?? 0],
+    ["5-Bases Entregadas", givenCash || givenTotal, givenBank],
+    ["6-Bases Devueltas", paidCash || paidTotal, paidBank],
+    ["Transferencias Ingreso", "", bankIn._sum.amount ?? 0],
+    ["Transferencias Salida", "", bankOut._sum.amount ?? 0],
+    ["15-Nómina Efectivo / 16-Banco", nEf._sum.amount ?? 0, nBk._sum.amount ?? 0],
+    ["Deudas Clientes (saldo)", report.clientDebt.balance, ""],
+  ];
+  let r = 3;
+  for (const [concept, ef, bk] of leftRows) {
+    ws.getCell(`A${r}`).value = concept;
+    ws.getCell(`B${r}`).value = ef === "" ? "" : ef; ws.getCell(`B${r}`).numFmt = money;
+    ws.getCell(`C${r}`).value = bk === "" ? "" : bk; ws.getCell(`C${r}`).numFmt = money;
+    r++;
+  }
+
+  // ── Columna derecha: CIERRE MES (resumen con fórmulas del sistema) ──
+  const rightRows: [string, number, string?][] = [
+    ["TOTAL VENTAS", report.totalSales],
+    ["TOTAL GASTOS", report.expenses.total],
+    ["TOTAL NÓMINA", report.payroll.total],
+    ["DIFERENCIA BASES", report.bases.diff, "zero"],
+    ["DIFERENCIA TRANSFERENCIAS", report.transfers.diff, "zero"],
+    ["SALDO DEUDAS CLIENTES", report.clientDebt.balance, "zero"],
+    ["COMISIONES PENDIENTES", report.commission.pending, "zero"],
+  ];
+  let er = 2;
+  for (const [label, val, kind] of rightRows) {
+    ws.getCell(`E${er}`).value = label;
+    ws.getCell(`F${er}`).value = val; ws.getCell(`F${er}`).numFmt = money;
+    ws.getCell(`E${er}`).font = { bold: true };
+    // verde si cuadra en 0, rojo si no (para los indicadores tipo "zero")
+    if (kind === "zero") {
+      const ok = val === 0;
+      ws.getCell(`F${er}`).font = { bold: true, color: { argb: ok ? "FF2E7D32" : "FFC62828" } };
+    }
+    er++;
+  }
+
+  // Ganancia / Utilidad
+  er++;
+  ws.getCell(`E${er}`).value = "GANANCIA (Utilidad Neta)";
+  Object.assign(ws.getCell(`E${er}`), titleFill("FF2E7D32"));
+  ws.getCell(`F${er}`).value = report.netProfit; ws.getCell(`F${er}`).numFmt = money;
+  ws.getCell(`F${er}`).font = { bold: true, color: { argb: report.netProfit >= 0 ? "FF2E7D32" : "FFC62828" } };
+  er++;
+
+  // Rentabilidad
+  er++;
+  ws.getCell(`E${er}`).value = "RENTABILIDAD"; ws.getCell(`E${er}`).font = { bold: true };
+  ws.getCell(`F${er}`).value = `${report.profitability.toFixed(1)}%`;
+  ws.getCell(`F${er}`).font = { bold: true };
+  er++;
+  ws.getCell(`E${er}`).value = "  ingresos mensuales"; ws.getCell(`F${er}`).value = report.totalSales; ws.getCell(`F${er}`).numFmt = money; er++;
+  ws.getCell(`E${er}`).value = "  costos totales"; ws.getCell(`F${er}`).value = report.expenses.total + report.payroll.total; ws.getCell(`F${er}`).numFmt = money; er++;
+  ws.getCell(`E${er}`).value = "  valor neto"; ws.getCell(`F${er}`).value = report.netProfit; ws.getCell(`F${er}`).numFmt = money; er++;
 }
 
 export async function buildMonthlyExcel(month: string, branchId?: string): Promise<Buffer> {
@@ -41,6 +157,9 @@ export async function buildMonthlyExcel(month: string, branchId?: string): Promi
   const wb = new ExcelJS.Workbook();
   wb.creator = "Cash Buddy EPA";
   wb.created = new Date();
+
+  // Hoja principal con la estructura "CIERRE MES" (igual al Excel manual)
+  await buildCierreMesSheet(wb, month, branchId);
 
   const headerStyle: Partial<ExcelJS.Style> = {
     font: { bold: true, color: { argb: "FFFFFFFF" } },

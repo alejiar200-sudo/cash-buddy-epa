@@ -24,6 +24,26 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// ─── Libreta de campo ─────────────────────────────────────────────────────────
+
+export interface FieldNote {
+  id: string;
+  date: string;
+  content: string;
+  author: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const getFieldNotes = (date?: string) =>
+  apiFetch<FieldNote[]>(`/field-notes${date ? `?date=${encodeURIComponent(date)}` : ""}`);
+export const createFieldNote = (content: string, author?: string, date?: string) =>
+  apiFetch<FieldNote>("/field-notes", { method: "POST", body: JSON.stringify({ content, author, date }) });
+export const updateFieldNote = (id: string, content: string) =>
+  apiFetch<FieldNote>(`/field-notes/${id}`, { method: "PATCH", body: JSON.stringify({ content }) });
+export const deleteFieldNote = (id: string) =>
+  apiFetch<void>(`/field-notes/${id}`, { method: "DELETE" });
+
 // ─── Branches ────────────────────────────────────────────────────────────────
 
 export const getBranches = () => apiFetch<Branch[]>("/branches");
@@ -60,10 +80,11 @@ export const getBases = (params?: { branchId?: string; driverId?: string }) => {
   const q = new URLSearchParams(Object.entries(params ?? {}).filter(([, v]) => v) as [string, string][]);
   return apiFetch<BaseTransaction[]>(`/sd/bases${q.toString() ? "?" + q : ""}`);
 };
-export const giveBase = (driverId: string, amount: number, notes?: string) =>
-  apiFetch(`/sd/bases/${driverId}/give`, { method: "POST", body: JSON.stringify({ amount, notes }) });
-export const payBase = (driverId: string, amount: number, notes?: string) =>
-  apiFetch(`/sd/bases/${driverId}/pay`, { method: "POST", body: JSON.stringify({ amount, notes }) });
+export interface BaseSplit { cashAmount?: number; bankAmount?: number; notes?: string }
+export const giveBase = (driverId: string, data: BaseSplit) =>
+  apiFetch(`/sd/bases/${driverId}/give`, { method: "POST", body: JSON.stringify(data) });
+export const payBase = (driverId: string, data: BaseSplit) =>
+  apiFetch(`/sd/bases/${driverId}/pay`, { method: "POST", body: JSON.stringify(data) });
 export const getBaseSummary = (driverId: string) => apiFetch<BaseSummary>(`/sd/bases/${driverId}/summary`);
 
 // ─── Conversions ──────────────────────────────────────────────────────────────
@@ -98,6 +119,8 @@ export const createManualOrder = (data: {
   deliveryValue: number;
   orderNumber?: string;
   customerName?: string;
+  clientId?: string;
+  addToClientDebt?: boolean;
   notes?: string;
 }) => apiFetch<Order>("/sd/orders/manual", { method: "POST", body: JSON.stringify(data) });
 
@@ -105,8 +128,8 @@ export const createManualOrder = (data: {
 
 export const getCloses = (branchId?: string) =>
   apiFetch<MonthlyClose[]>(`/sd/closes${branchId ? `?branchId=${branchId}` : ""}`);
-export const createClose = (month: string, branchId?: string) =>
-  apiFetch<MonthlyClose>("/sd/closes", { method: "POST", body: JSON.stringify({ month, branchId }) });
+export const createClose = (month: string, branchId?: string, initialCash?: number, initialBank?: number) =>
+  apiFetch<MonthlyClose>("/sd/closes", { method: "POST", body: JSON.stringify({ month, branchId, initialCash, initialBank }) });
 export const exportExcel = async (month: string, branchId?: string) => {
   const token = getToken();
   const q = branchId ? `?branchId=${branchId}` : "";
@@ -122,6 +145,221 @@ export const exportExcel = async (month: string, branchId?: string) => {
   a.click();
   URL.revokeObjectURL(url);
 };
+
+// ─── Dashboard Full ───────────────────────────────────────────────────────────
+
+export interface DashboardFull extends DashboardData {
+  caja: {
+    shifts: ShiftClose[];
+    shiftsStatus: { AM: boolean; PM: boolean; close: boolean };
+    bankToday: BankSummary;
+    expectedCash: number;
+    expectedBank: number;
+  };
+  topClientDebtors: { id: string; name: string; phone?: string; pendingDebt: number }[];
+}
+
+export const getDashboardFull = (branchId?: string) =>
+  apiFetch<DashboardFull>(`/sd/dashboard/full${branchId ? `?branchId=${branchId}` : ""}`);
+
+// ─── Unified bank movements ───────────────────────────────────────────────────
+
+export type BankMovementType = "ingreso" | "egreso" | "consignacion" | "retiro";
+
+export interface UnifiedBankMovement {
+  id: string;
+  type: BankMovementType;
+  medium?: "cash" | "bank";
+  amount: number;
+  description: string;
+  reference?: string;
+  branchId?: string;
+  branchName?: string;
+  driverName?: string;
+  createdByName?: string | null;
+  groupId?: string | null;
+  pairId?: string | null;
+  // Para movimientos mixtos consolidados:
+  cashPart?: number;
+  bankPart?: number;
+  date: string;
+  source: "bank" | "conversion";
+}
+
+export async function getUnifiedBankMovements(params?: { from?: string; to?: string; branchId?: string }): Promise<UnifiedBankMovement[]> {
+  const q = new URLSearchParams(Object.entries(params ?? {}).filter(([, v]) => v) as [string, string][]);
+  const [txs, convs] = await Promise.all([
+    apiFetch<BankTransaction[]>(`/bank-transactions${q.toString() ? "?" + q : ""}`),
+    apiFetch<Conversion[]>(`/sd/conversions${q.toString() ? "?" + q : ""}`),
+  ]);
+
+  // Consolidar mixtos: dos filas con el mismo groupId = UN movimiento (efectivo+transferencia).
+  const mixedGroups = new Map<string, BankTransaction[]>();
+  const singles: BankTransaction[] = [];
+  for (const t of txs) {
+    if (t.groupId) {
+      const g = mixedGroups.get(t.groupId) ?? [];
+      g.push(t);
+      mixedGroups.set(t.groupId, g);
+    } else {
+      singles.push(t);
+    }
+  }
+
+  const fromTxs: UnifiedBankMovement[] = singles.map(t => ({
+    id: t.id,
+    type: t.type as BankMovementType,
+    medium: t.medium ?? "bank",
+    amount: t.amount,
+    description: t.description,
+    reference: t.reference,
+    driverName: t.driverName,
+    createdByName: t.createdByName,
+    pairId: t.pairId,
+    date: t.date,
+    source: "bank" as const,
+  }));
+
+  // Un movimiento consolidado por cada grupo mixto.
+  for (const [groupId, parts] of mixedGroups) {
+    if (parts.length === 1) {
+      // Mitad huérfana (no debería pasar): tratarla como simple.
+      const t = parts[0];
+      fromTxs.push({ id: t.id, type: t.type as BankMovementType, medium: t.medium ?? "bank", amount: t.amount, description: t.description, reference: t.reference, driverName: t.driverName, createdByName: t.createdByName, groupId, pairId: t.pairId, date: t.date, source: "bank" });
+      continue;
+    }
+    const cashPart = parts.find(p => p.medium === "cash")?.amount ?? 0;
+    const bankPart = parts.find(p => p.medium === "bank")?.amount ?? 0;
+    const head = parts[0];
+    fromTxs.push({
+      id: head.id, // id de una mitad; al eliminar, el backend borra ambas por groupId
+      type: head.type as BankMovementType,
+      amount: cashPart + bankPart,
+      description: head.description,
+      reference: head.reference,
+      driverName: head.driverName,
+      createdByName: head.createdByName,
+      groupId,
+      pairId: head.pairId,
+      cashPart,
+      bankPart,
+      date: head.date,
+      source: "bank" as const,
+    });
+  }
+
+  const fromConvs: UnifiedBankMovement[] = convs.map(c => ({
+    id: c.id,
+    type: c.type === "efectivo_a_banco" ? "consignacion" : "retiro",
+    // efectivo_a_banco: entró efectivo / salió banco; banco_a_efectivo: al revés
+    medium: c.type === "efectivo_a_banco" ? "cash" : "bank",
+    amount: c.amount,
+    description: c.notes || (c.type === "efectivo_a_banco" ? "Recibí efectivo / Envié transferencia" : "Recibí transferencia / Entregué efectivo"),
+    reference: undefined,
+    branchId: c.branchId,
+    branchName: c.branch?.name,
+    driverName: c.driverName,
+    date: c.date,
+    source: "conversion" as const,
+  }));
+
+  return [...fromTxs, ...fromConvs].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+}
+
+// ─── Movimientos unificados ───────────────────────────────────────────────────
+
+export interface UnifiedMovement {
+  id: string;
+  date: string;
+  time: string;
+  type: "ingreso" | "egreso";
+  medium: "cash" | "bank";
+  amount: number;
+  description: string;
+  category: string;
+  source: string;
+  relatedName?: string;
+  entityType: string;
+  entityId: string;
+  editableDescription: boolean;
+}
+
+export const getUnifiedMovements = (params?: { from?: string; to?: string; limit?: number }) => {
+  const q = new URLSearchParams(
+    Object.entries(params ?? {}).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)])
+  );
+  return apiFetch<UnifiedMovement[]>(`/movements/unified${q.toString() ? "?" + q : ""}`);
+};
+
+// ─── URL de acceso local ──────────────────────────────────────────────────────
+
+export interface LocalUrls {
+  port: number;
+  primary: string;
+  local: string | null;
+  tailscale: string | null;
+  urls: { name: string; ip: string; url: string }[];
+}
+
+export const getLocalUrls = () => apiFetch<LocalUrls>("/network/local-urls");
+
+// ─── Usuarios ─────────────────────────────────────────────────────────────────
+
+export interface SystemUser {
+  id: string;
+  email: string;
+  name: string;
+  role: "admin" | "user";
+  active: boolean;
+  createdAt: string;
+}
+
+export const getUsers = () => apiFetch<SystemUser[]>("/users");
+export const createUser = (data: { email: string; name: string; password: string; role: "admin" | "user" }) =>
+  apiFetch<SystemUser>("/users", { method: "POST", body: JSON.stringify(data) });
+export const updateUser = (id: string, data: { name?: string; role?: "admin" | "user"; active?: boolean; password?: string }) =>
+  apiFetch<SystemUser>(`/users/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+export const deleteUser = (id: string) =>
+  apiFetch<{ ok: boolean }>(`/users/${id}`, { method: "DELETE" });
+
+// ─── Solicitudes de edición ───────────────────────────────────────────────────
+
+export interface EditRequestChange { old: string; new: string }
+
+export interface EditRequest {
+  id: string;
+  requesterId: string;
+  requestType: "edit" | "delete";
+  entityType: string;
+  entityId: string;
+  entityLabel: string;
+  changes: Record<string, EditRequestChange>;
+  reason: string;
+  status: "pending" | "approved" | "rejected";
+  reviewerId?: string;
+  reviewNotes?: string;
+  reviewedAt?: string;
+  createdAt: string;
+  requester?: { id: string; name: string; email: string };
+  reviewer?: { id: string; name: string };
+}
+
+export const getEditRequests = (status?: "pending" | "approved" | "rejected") =>
+  apiFetch<EditRequest[]>(`/edit-requests${status ? `?status=${status}` : ""}`);
+export const getEditRequestCount = () =>
+  apiFetch<{ count: number }>("/edit-requests/count");
+export const createEditRequest = (data: {
+  entityType: string;
+  entityId: string;
+  entityLabel: string;
+  changes: Record<string, EditRequestChange>;
+  reason: string;
+  requestType?: "edit" | "delete";
+}) => apiFetch<EditRequest>("/edit-requests", { method: "POST", body: JSON.stringify(data) });
+export const reviewEditRequest = (id: string, action: "approved" | "rejected", notes?: string) =>
+  apiFetch<EditRequest>(`/edit-requests/${id}/review`, { method: "POST", body: JSON.stringify({ action, notes }) });
+export const recalcOrders = () =>
+  apiFetch<{ total: number; fixed: number }>("/admin/recalc-orders", { method: "POST" });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -208,6 +446,8 @@ export interface BaseTransaction {
   branchId: string;
   driverId: string;
   amount: number;
+  cashAmount?: number;
+  bankAmount?: number;
   type: "entrega" | "pago";
   notes?: string;
   date: string;
@@ -236,6 +476,7 @@ export interface ConversionInput {
   amount: number;
   type: "banco_a_efectivo" | "efectivo_a_banco";
   notes?: string;
+  driverId?: string;
   date?: string;
 }
 
@@ -245,6 +486,8 @@ export interface Conversion {
   amount: number;
   type: "banco_a_efectivo" | "efectivo_a_banco";
   notes?: string;
+  driverId?: string;
+  driverName?: string;
   date: string;
   branch?: { id: string; name: string };
 }
@@ -288,6 +531,182 @@ export interface MonthlyClose {
   basesPaid: number;
   basesPending: number;
   conversions: unknown;
+  initialCash?: number;
+  initialBank?: number;
   closedAt: string;
   branch?: { id: string; name: string };
 }
+
+// ─── Clients ──────────────────────────────────────────────────────────────────
+
+export interface Client {
+  id: string;
+  name: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  notes?: string;
+  pendingDebt: number;
+  active: boolean;
+  createdAt: string;
+  debts: ClientDebt[];
+}
+
+export interface ClientDebt {
+  id: string;
+  clientId: string;
+  description: string;
+  amount: number;
+  paid: boolean;
+  paidAt?: string;
+  paidAmount?: number;
+  createdAt: string;
+}
+
+export const getClients = (active?: boolean) =>
+  apiFetch<Client[]>(`/clients${active ? "?active=true" : ""}`);
+export const getClient = (id: string) => apiFetch<Client>(`/clients/${id}`);
+export const getDebtors = () => apiFetch<Client[]>("/clients/debtors");
+export const createClient = (data: Partial<Client> & { initialDebt?: number; initialDebtDescription?: string }) =>
+  apiFetch<Client>("/clients", { method: "POST", body: JSON.stringify(data) });
+export const updateClient = (id: string, data: Partial<Client>) =>
+  apiFetch<Client>(`/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+export const deleteClient = (id: string) =>
+  apiFetch<void>(`/clients/${id}`, { method: "DELETE" });
+export const addClientDebt = (clientId: string, description: string, amount: number, date?: string) =>
+  apiFetch<ClientDebt>(`/clients/${clientId}/debt`, {
+    method: "POST", body: JSON.stringify({ description, amount, date }),
+  });
+export const payClientDebt = (debtId: string, paidAmount?: number) =>
+  apiFetch<{ ok: boolean }>(`/clients/debts/${debtId}/pay`, {
+    method: "POST", body: JSON.stringify({ paidAmount }),
+  });
+export const payClient = (clientId: string, amount: number, payAll = false, medium: "cash" | "bank" = "cash") =>
+  apiFetch<{ applied: number; remaining: number }>(`/clients/${clientId}/pay`, {
+    method: "POST", body: JSON.stringify({ amount, payAll, medium }),
+  });
+
+// ─── Bank Transactions ────────────────────────────────────────────────────────
+
+export interface BankTransaction {
+  id: string;
+  type: "ingreso" | "egreso";
+  medium?: "cash" | "bank";
+  amount: number;
+  description: string;
+  reference?: string;
+  driverId?: string;
+  driverName?: string;
+  createdByName?: string | null;
+  groupId?: string | null;
+  pairId?: string | null;
+  date: string;
+  createdAt: string;
+}
+
+// ─── Reporte mensual ──────────────────────────────────────────────────────────
+export interface MonthlyReport {
+  month: string;
+  totalSales: number;
+  expenses: { cash: number; bank: number; total: number };
+  payroll: { cash: number; bank: number; total: number };
+  bases: { given: number; returned: number; diff: number; ok: boolean; pendingDrivers: { id: string; name: string; pendingDebt: number }[] };
+  commission: { pending: number; ok: boolean; pendingDrivers: { id: string; name: string; pendingDebt: number }[] };
+  transfers: { ingresos: number; egresos: number; diff: number; ok: boolean };
+  clientDebt: { generated: number; paid: number; balance: number; ok: boolean; pendingClients: { id: string; name: string; pendingDebt: number }[] };
+  netProfit: number;
+  profitability: number;
+}
+export const getMonthlyReport = (month: string, branchId?: string) =>
+  apiFetch<MonthlyReport>(`/sd/report/${month}${branchId ? `?branchId=${branchId}` : ""}`);
+
+export interface MonthCloseProjection {
+  month: string;
+  targetCash: number;
+  targetBank: number;
+  targetCapital: number;
+  pending: {
+    basesDiff: number;
+    transferDiff: number;
+    commissionPending: number;
+    totalDiffs: number;
+    clientDebts: number;
+    cashShortfall: number;
+    bankShortfall: number;
+    total: number;
+  };
+  physicalCash: number;
+  physicalBank: number;
+  physicalToLeave: number;
+  explanation: string;
+}
+export const getMonthCloseProjection = (month: string, targetCash: number, targetBank: number, branchId?: string) =>
+  apiFetch<MonthCloseProjection>(`/sd/projection/${month}?targetCash=${targetCash}&targetBank=${targetBank}${branchId ? `&branchId=${branchId}` : ""}`);
+
+// ─── Aprobación de gastos ─────────────────────────────────────────────────────
+export interface PendingMovement {
+  id: string; date: string; time: string; category: number; amount: number;
+  medium: "cash" | "bank"; description?: string; createdBy?: string;
+  worker?: { name: string }; createdAt: string;
+}
+export const getPendingMovements = () => apiFetch<PendingMovement[]>("/movements/pending");
+export const approveMovement = (id: string) => apiFetch(`/movements/${id}/approve`, { method: "POST" });
+export const rejectMovement = (id: string) => apiFetch(`/movements/${id}/reject`, { method: "POST" });
+
+export interface BankSummary {
+  ingresos: number;
+  egresos: number;
+  balance: number;
+  count: number;
+}
+
+export const getBankTransactions = (params?: { type?: string; from?: string; to?: string }) => {
+  const q = new URLSearchParams(Object.entries(params ?? {}).filter(([, v]) => v) as [string, string][]);
+  return apiFetch<BankTransaction[]>(`/bank-transactions${q.toString() ? "?" + q : ""}`);
+};
+export const getBankSummary = (from?: string, to?: string) => {
+  const q = new URLSearchParams(Object.entries({ from, to }).filter(([, v]) => v) as [string, string][]);
+  return apiFetch<BankSummary>(`/bank-transactions/summary${q.toString() ? "?" + q : ""}`);
+};
+export const createBankTransaction = (
+  data: Omit<BankTransaction, "id" | "createdAt"> & { cashAmount?: number; bankAmount?: number; pairWith?: string },
+) =>
+  apiFetch<BankTransaction>("/bank-transactions", { method: "POST", body: JSON.stringify(data) });
+export const deleteBankTransaction = (id: string) =>
+  apiFetch<void>(`/bank-transactions/${id}`, { method: "DELETE" });
+
+// ─── Shift Closes ─────────────────────────────────────────────────────────────
+
+export interface ShiftClose {
+  id: string;
+  date: string;
+  shift: "AM" | "PM" | "close";
+  receivedBy?: string;
+  handedBy?: string;
+  denominations: { bills: { value: number; qty: number }[]; coins: { value: number; qty: number }[] };
+  totalCounted: number;
+  totalExpected: number;
+  difference: number;
+  notes?: string;
+  createdByName?: string | null;
+  closedAt: string;
+}
+
+export const getShifts = (params?: { from?: string; to?: string }) => {
+  const q = new URLSearchParams(Object.entries(params ?? {}).filter(([, v]) => v) as [string, string][]);
+  return apiFetch<ShiftClose[]>(`/shifts${q.toString() ? "?" + q : ""}`);
+};
+export const getShiftsForDate = (date: string) => apiFetch<ShiftClose[]>(`/shifts/${date}`);
+
+/** #6 — efectivo y banco esperados calculados automáticamente para la fecha. */
+export const getExpectedForDate = (date: string) =>
+  apiFetch<{ date: string; expectedCash: number; expectedBank: number }>(`/shifts/${date}/expected`);
+export const registerShift = (data: {
+  date: string;
+  shift: "AM" | "PM" | "close";
+  receivedBy?: string;
+  handedBy?: string;
+  denominations: ShiftClose["denominations"];
+  expectedAmount: number;
+  notes?: string;
+}) => apiFetch<ShiftClose>("/shifts", { method: "POST", body: JSON.stringify(data) });

@@ -28,6 +28,14 @@ apps/desktop/dist
 # Prisma
 apps/api/prisma/*.db
 
+# Secreto de cifrado de API Keys (se genera por equipo, NO se versiona)
+.encryption-key
+apps/api/.encryption-key
+
+# Artefactos del lanzador de escritorio
+.cashbuddy-app-profile/
+cashbuddy-launcher.log
+
 # Editor
 .vscode/*
 !.vscode/extensions.json

@@ -47,6 +47,10 @@ export interface Movement {
   kind?: MovementKind | null;
   deliveryId?: string | null;
   deliveryValue?: number | null;
+  createdBy?: string | null;
+  createdByName?: string | null;
+  approvedBy?: string | null;
+  approvedByName?: string | null;
 }
 
 export interface Arqueo {
@@ -67,6 +71,9 @@ export interface DayData {
 
 export interface Settings {
   companyName: string;
+  brandName?: string;
+  logoData?: string | null;
+  termsAcceptedAt?: string | null;
   initialCash: number;
   initialBank: number;
   setupComplete: boolean;

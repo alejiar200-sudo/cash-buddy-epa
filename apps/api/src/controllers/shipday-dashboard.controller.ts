@@ -6,6 +6,11 @@ export async function dashboard(req: Request, res: Response) {
   res.json(await svc.getDashboard(branchId));
 }
 
+export async function dashboardFull(req: Request, res: Response) {
+  const branchId = req.query.branchId as string | undefined;
+  res.json(await svc.getDashboardFull(branchId));
+}
+
 export async function dailyStats(req: Request, res: Response) {
   const branchId = req.query.branchId as string | undefined;
   res.json(await svc.getDailyStats(req.params.date, branchId));

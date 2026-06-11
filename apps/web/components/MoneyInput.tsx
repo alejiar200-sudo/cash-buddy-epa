@@ -10,6 +10,8 @@ interface Props {
 
 export function MoneyInput({ value, onChange, autoFocus, placeholder }: Props) {
   const ref = useRef<HTMLInputElement>(null);
+  // Nombre aleatorio estable para que el navegador no ofrezca autocompletado.
+  const nameRef = useRef(`money-${Math.random().toString(36).slice(2)}`);
   useEffect(() => { if (autoFocus) setTimeout(() => ref.current?.focus(), 60); }, [autoFocus]);
   return (
     <div className="relative">
@@ -17,6 +19,10 @@ export function MoneyInput({ value, onChange, autoFocus, placeholder }: Props) {
         ref={ref}
         inputMode="numeric"
         type="text"
+        autoComplete="off"
+        autoCorrect="off"
+        spellCheck={false}
+        name={nameRef.current}
         value={value === 0 ? "" : formatCOP(value).replace("$", "")}
         placeholder={placeholder ?? "0"}
         onChange={(e) => {

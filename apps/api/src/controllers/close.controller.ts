@@ -1,15 +1,29 @@
 import type { Request, Response } from "express";
 import * as closeSvc from "../services/close.service";
 import * as excelSvc from "../services/excel.service";
+import { getActor } from "../lib/actor";
 
 export async function close(req: Request, res: Response) {
-  const { month, branchId } = req.body;
-  res.status(201).json(await closeSvc.closeMonth(month, branchId));
+  const { month, branchId, initialCash, initialBank } = req.body;
+  res.status(201).json(await closeSvc.closeMonth(month, branchId, initialCash, initialBank, getActor(req)));
 }
 
 export async function list(req: Request, res: Response) {
   const branchId = req.query.branchId as string | undefined;
   res.json(await closeSvc.listCloses(branchId));
+}
+
+export async function report(req: Request, res: Response) {
+  const branchId = req.query.branchId as string | undefined;
+  res.json(await closeSvc.getMonthlyReport(req.params.month, branchId));
+}
+
+/** #5 — proyección del capital físico a dejar según capital objetivo. */
+export async function projection(req: Request, res: Response) {
+  const branchId = req.query.branchId as string | undefined;
+  const targetCash = Number(req.query.targetCash ?? 0);
+  const targetBank = Number(req.query.targetBank ?? 0);
+  res.json(await closeSvc.getMonthCloseProjection(req.params.month, targetCash, targetBank, branchId));
 }
 
 export async function get(req: Request, res: Response) {

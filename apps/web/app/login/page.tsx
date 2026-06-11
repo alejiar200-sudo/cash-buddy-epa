@@ -12,10 +12,16 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [brand, setBrand] = useState<{ brandName: string; logoData: string | null }>({ brandName: "Cash Buddy EPA", logoData: null });
 
   useEffect(() => {
     if (!loading && user) router.replace("/");
   }, [loading, user, router]);
+
+  // Branding público (logo + nombre) sin necesidad de login
+  useEffect(() => {
+    fetch("/api/branding").then(r => r.json()).then(b => setBrand({ brandName: b.brandName || "Cash Buddy", logoData: b.logoData })).catch(() => {});
+  }, []);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -34,10 +40,12 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="flex flex-col items-center mb-8">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary to-accent flex items-center justify-center text-background font-black text-3xl shadow-cash">
-            E
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary to-accent flex items-center justify-center text-background font-black text-3xl shadow-cash overflow-hidden">
+            {brand.logoData
+              ? <img src={brand.logoData} alt="logo" className="w-full h-full object-contain" />
+              : (brand.brandName.charAt(0).toUpperCase() || "E")}
           </div>
-          <h1 className="mt-4 text-2xl font-black">Cash Buddy EPA</h1>
+          <h1 className="mt-4 text-2xl font-black">{brand.brandName}</h1>
           <p className="text-sm text-muted-foreground">Sistema de caja diaria</p>
         </div>
 

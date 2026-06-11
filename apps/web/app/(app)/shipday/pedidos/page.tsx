@@ -1,12 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { RefreshCw, Plus, Copy, Webhook, Info } from "lucide-react";
+import { RefreshCw, Plus, Copy, Webhook, Info, Pencil, Trash2 } from "lucide-react";
+import { ManualOrderWizard } from "@/components/wizards/ManualOrderWizard";
+import { EditRequestWizard, type EditableField } from "@/components/wizards/EditRequestWizard";
+import { DeleteRequestWizard } from "@/components/wizards/DeleteRequestWizard";
 import { toast } from "sonner";
 import * as api from "@/lib/sd-api";
 import type { Order, Branch, Driver } from "@/lib/sd-api";
 import { formatCOP } from "@/lib/format";
 import { LiveBadge } from "@/components/LiveBadge";
+import { useAuth } from "@/lib/auth";
 
 export default function PedidosPage() {
   const [orders, setOrders] = useState<Order[]>([]);
@@ -17,6 +21,9 @@ export default function PedidosPage() {
   const [to, setTo] = useState("");
   const [loading, setLoading] = useState(true);
   const [showManual, setShowManual] = useState(false);
+  const [editOrder, setEditOrder] = useState<Order | null>(null);
+  const [deleteOrder, setDeleteOrder] = useState<Order | null>(null);
+  const { user } = useAuth();
   const [showWebhook, setShowWebhook] = useState(false);
 
   const load = async () => {
@@ -40,12 +47,12 @@ export default function PedidosPage() {
   useEffect(() => { if (branchId) { setLoading(true); api.getOrdersByBranch(branchId, from || undefined, to || undefined).then(setOrders).catch(() => toast.error("Error")).finally(() => setLoading(false)); } }, [branchId, from, to]);
   useEffect(() => { if (branchId) { api.getDrivers(branchId).then(setDrivers); } }, [branchId]);
 
-  // Refresco en vivo cada 3s (solo orders, sin spinner ni toasts)
+  // Refresco en vivo cada 10s (solo orders, sin spinner ni toasts)
   useEffect(() => {
     if (!branchId) return;
     const t = setInterval(() => {
       api.getOrdersByBranch(branchId, from || undefined, to || undefined).then(setOrders).catch(() => {});
-    }, 3_000);
+    }, 10_000);
     return () => clearInterval(t);
   }, [branchId, from, to]);
 
@@ -124,13 +131,14 @@ export default function PedidosPage() {
               <th className="text-right px-4 py-3">Valor</th>
               <th className="text-right px-4 py-3">% empresa</th>
               <th className="text-center px-4 py-3">Tipo</th>
+              <th className="text-center px-4 py-3">Editar</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} className="text-center py-12 text-muted-foreground">Cargando...</td></tr>
+              <tr><td colSpan={8} className="text-center py-12 text-muted-foreground">Cargando...</td></tr>
             ) : sortedOrders.length === 0 ? (
-              <tr><td colSpan={7} className="text-center py-12 text-muted-foreground">Sin pedidos — registra uno manualmente o configura el webhook</td></tr>
+              <tr><td colSpan={8} className="text-center py-12 text-muted-foreground">Sin pedidos — registra uno manualmente o configura el webhook</td></tr>
             ) : sortedOrders.map(o => (
               <tr key={o.id} className="border-b border-border/50 hover:bg-secondary/30 transition">
                 <td className="px-4 py-2.5 font-bold tnum">#{o.orderNumber ?? "—"}</td>
@@ -146,26 +154,69 @@ export default function PedidosPage() {
                     {o.shipdayOrderId?.startsWith("manual-") ? "Manual" : "Shipday"}
                   </span>
                 </td>
+                <td className="px-4 py-2.5">
+                  <div className="flex items-center justify-center gap-0.5">
+                    <button
+                      onClick={() => setEditOrder(o)}
+                      title="Solicitar corrección de este pedido"
+                      className="p-1.5 rounded-lg hover:bg-secondary transition text-muted-foreground hover:text-primary"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => setDeleteOrder(o)}
+                      title="Solicitar eliminación de este pedido"
+                      className="p-1.5 rounded-lg hover:bg-secondary transition text-muted-foreground hover:text-red-500"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      {/* Modal registro manual */}
-      {showManual && (
-        <ManualOrderModal
-          branches={branches}
-          drivers={drivers.filter(d => !branchId || d.branchId === branchId)}
-          defaultBranchId={branchId}
-          onClose={() => setShowManual(false)}
-          onSaved={() => { setShowManual(false); load(); }}
-        />
-      )}
+      {/* Wizard interactivo para registro manual */}
+      <ManualOrderWizard
+        open={showManual}
+        onOpenChange={setShowManual}
+        onDone={load}
+      />
 
       {/* Modal webhook */}
       {showWebhook && currentBranch && (
         <WebhookModal branch={currentBranch} webhookUrl={webhookUrl} onClose={() => setShowWebhook(false)} />
+      )}
+
+      {/* Wizard de solicitud de edición de pedido */}
+      {editOrder && (
+        <EditRequestWizard
+          open={true}
+          onOpenChange={(v) => { if (!v) setEditOrder(null); }}
+          entityType="ShipdayOrder"
+          entityId={editOrder.id}
+          entityLabel={`Pedido #${editOrder.orderNumber ?? "—"} · ${formatCOP(editOrder.deliveryValue)}`}
+          fields={[
+            { field: "deliveryValue", label: "Valor del domicilio", currentValue: String(editOrder.deliveryValue), type: "money" },
+            { field: "customerName", label: "Cliente", currentValue: editOrder.customerName ?? "", type: "text" },
+            { field: "orderNumber", label: "N° de pedido", currentValue: editOrder.orderNumber ?? "", type: "text" },
+          ] as EditableField[]}
+          onDone={load}
+        />
+      )}
+
+      {/* Wizard de solicitud de eliminación de pedido */}
+      {deleteOrder && (
+        <DeleteRequestWizard
+          open={true}
+          onOpenChange={(v) => { if (!v) setDeleteOrder(null); }}
+          entityType="ShipdayOrder"
+          entityId={deleteOrder.id}
+          entityLabel={`Pedido #${deleteOrder.orderNumber ?? "—"} · ${formatCOP(deleteOrder.deliveryValue)}${deleteOrder.driver ? ` · ${deleteOrder.driver.name}` : ""}`}
+          onDone={load}
+        />
       )}
     </div>
   );

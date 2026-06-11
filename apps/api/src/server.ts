@@ -34,9 +34,17 @@ export function createServer(options: CreateServerOptions = {}): Express {
   // Frontend estático (modelo host: un solo puerto sirve API + UI)
   const webDir = options.webDir;
   if (webDir && fs.existsSync(webDir)) {
-    app.use(express.static(webDir));
-    // Fallback SPA: cualquier ruta no-API devuelve index.html
-    app.get(/^(?!\/api).*/, (_req, res, next) => {
+    // extensions:["html"] → una petición a /banco sirve banco.html automáticamente
+    app.use(express.static(webDir, { extensions: ["html"] }));
+    // Fallback para rutas no-API: intenta servir el .html específico de la ruta
+    // (deep links como /banco o /shipday/pedidos) y solo si no existe, index.html.
+    app.get(/^(?!\/api).*/, (req, res, next) => {
+      // Normaliza la ruta y previene path traversal
+      const cleanPath = decodeURIComponent(req.path).replace(/\.+/g, ".").replace(/^\/+/, "");
+      const candidate = path.join(webDir, `${cleanPath}.html`);
+      if (cleanPath && candidate.startsWith(webDir) && fs.existsSync(candidate)) {
+        return res.sendFile(candidate);
+      }
       const indexHtml = path.join(webDir, "index.html");
       if (fs.existsSync(indexHtml)) return res.sendFile(indexHtml);
       next();

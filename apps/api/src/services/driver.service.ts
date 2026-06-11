@@ -27,66 +27,69 @@ export async function getDriverDetail(id: string) {
   return driver;
 }
 
-export async function registerPayment(driverId: string, amount: number, medium: "cash" | "bank", notes?: string) {
+export async function registerPayment(driverId: string, amount: number, medium: "cash" | "bank", notes?: string, actor?: { id?: string | null; name?: string | null }) {
   if (!amount || amount <= 0) throw badRequest("Monto inválido");
   if (medium !== "cash" && medium !== "bank") throw badRequest("Medio de pago inválido (cash o bank)");
   const driver = await prisma.driver.findUnique({ where: { id: driverId } });
   if (!driver) throw notFound("Domiciliario no encontrado");
 
-  // Calcular saldo de base pendiente para este domiciliario
-  const bases = await prisma.baseTransaction.findMany({ where: { driverId } });
-  const basesGiven = bases.filter(b => b.type === "entrega").reduce((s, b) => s + b.amount, 0);
-  const basesPaid = bases.filter(b => b.type === "pago").reduce((s, b) => s + b.amount, 0);
+  // Saldo de base pendiente vía aggregate (no carga todas las filas)
+  const [givenAgg, paidAgg] = await Promise.all([
+    prisma.baseTransaction.aggregate({ where: { driverId, type: "entrega" }, _sum: { amount: true } }),
+    prisma.baseTransaction.aggregate({ where: { driverId, type: "pago" }, _sum: { amount: true } }),
+  ]);
+  const basesGiven = givenAgg._sum.amount ?? 0;
+  const basesPaid = paidAgg._sum.amount ?? 0;
   const basePending = Math.max(0, basesGiven - basesPaid);
 
   // Asignación: primero a base, el resto a comisión
   const baseAlloc = Math.min(amount, basePending);
   const commissionAlloc = amount - baseAlloc;
 
-  const ops = [] as Parameters<typeof prisma.$transaction>[0];
+  // IMPORTANTE: el dinero del domiciliario ENTRA a la empresa.
+  //  - La parte de base se registra UNA sola vez como BaseTransaction "pago" (devolución).
+  //  - La parte de comisión se registra como DriverPayment (solo el monto de comisión).
+  // Así no se duplica el movimiento ni aparece un egreso fantasma.
+  let payment = null as Awaited<ReturnType<typeof prisma.driverPayment.create>> | null;
 
-  if (baseAlloc > 0) {
-    ops.push(
-      prisma.baseTransaction.create({
+  await prisma.$transaction(async (tx) => {
+    // Devolución de base (dinero que regresa a la empresa)
+    if (baseAlloc > 0) {
+      await tx.baseTransaction.create({
         data: {
           driverId,
           branchId: driver.branchId,
           amount: baseAlloc,
           type: "pago",
-          notes: `Pago asignado a base (medio: ${medium === "cash" ? "efectivo" : "transferencia"})${notes ? ` · ${notes}` : ""}`,
+          notes: `Devolución de base (${medium === "cash" ? "efectivo" : "transferencia"})${notes ? ` · ${notes}` : ""}`,
+          createdBy: actor?.id ?? null,
+          createdByName: actor?.name ?? null,
         },
-      }),
-    );
-  }
+      });
+    }
 
-  // Siempre registramos el DriverPayment con el monto total para mantener el
-  // historial completo con el medio de pago real elegido.
-  ops.push(
-    prisma.driverPayment.create({
-      data: {
-        driverId,
-        branchId: driver.branchId,
-        amount,
-        medium,
-        notes:
-          baseAlloc > 0 && commissionAlloc > 0
-            ? `Asignado: base ${baseAlloc}, comisión ${commissionAlloc}${notes ? ` · ${notes}` : ""}`
-            : baseAlloc > 0
-              ? `Aplicado totalmente a base${notes ? ` · ${notes}` : ""}`
-              : notes ?? null,
-      },
-    }),
-  );
+    // Pago de comisión (solo la parte que NO es base)
+    if (commissionAlloc > 0) {
+      payment = await tx.driverPayment.create({
+        data: {
+          driverId,
+          branchId: driver.branchId,
+          amount: commissionAlloc,
+          medium,
+          notes: `Pago de comisión${notes ? ` · ${notes}` : ""}`,
+          createdBy: actor?.id ?? null,
+          createdByName: actor?.name ?? null,
+        },
+      });
+    }
 
-  ops.push(
-    prisma.driver.update({
+    // La deuda total baja por el monto completo (base + comisión)
+    await tx.driver.update({
       where: { id: driverId },
       data: { pendingDebt: { decrement: amount } },
-    }),
-  );
+    });
+  });
 
-  const results = await prisma.$transaction(ops);
-  const payment = results[results.length - 2]; // el DriverPayment está antes del update
   return { payment, baseAlloc, commissionAlloc, basePendingBefore: basePending };
 }
 

@@ -16,8 +16,8 @@ interface Props {
 export function WizardShell({ open, onOpenChange, step, total, title, subtitle, children, onBack }: Props) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg p-0 gap-0 bg-card border-border rounded-3xl overflow-hidden">
-        <div className="px-6 pt-5 pb-4 border-b border-border flex items-center gap-3">
+      <DialogContent className="max-w-lg p-0 gap-0 bg-card border-border rounded-3xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="px-6 pt-5 pb-4 border-b border-border flex items-center gap-3 shrink-0">
           {onBack ? (
             <button onClick={onBack} className="p-1.5 rounded-lg hover:bg-secondary">
               <ChevronLeft className="h-5 w-5" />
@@ -37,7 +37,7 @@ export function WizardShell({ open, onOpenChange, step, total, title, subtitle, 
             <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="px-6 py-6">
+        <div className="px-6 py-6 overflow-y-auto flex-1">
           <DialogTitle className="text-2xl font-bold">{title}</DialogTitle>
           {subtitle && <p className="text-sm text-muted-foreground mt-2">{subtitle}</p>}
           <div className="mt-5">{children}</div>

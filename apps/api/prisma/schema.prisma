@@ -64,6 +64,23 @@ enum SyncStatus {
   never
 }
 
+enum BankTxType {
+  ingreso
+  egreso
+}
+
+enum EditRequestStatus {
+  pending
+  approved
+  rejected
+}
+
+enum ShiftSlot {
+  AM
+  PM
+  close
+}
+
 // ============================================================
 // MODELOS - Sistema original (sin cambios)
 // ============================================================
@@ -74,13 +91,42 @@ model User {
   name         String
   passwordHash String
   role         UserRole @default(user)
+  active       Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+
+  editRequests   EditRequest[] @relation("requester")
+  reviewedEdits  EditRequest[] @relation("reviewer")
+}
+
+model EditRequest {
+  id           String            @id @default(cuid())
+  requesterId  String
+  requestType  String            @default("edit") // "edit" | "delete"
+  entityType   String            // "ShipdayOrder" | "Movement" | "BankTransaction" | etc.
+  entityId     String            // ID del registro a editar/eliminar
+  entityLabel  String            // Descripción legible: "Pedido #30 - $90.000"
+  changes      Json              // { field: { old, new }, ... } — vacío si es delete
+  reason       String
+  status       EditRequestStatus @default(pending)
+  reviewerId   String?
+  reviewNotes  String?
+  reviewedAt   DateTime?
+  createdAt    DateTime          @default(now())
+
+  requester User  @relation("requester", fields: [requesterId], references: [id])
+  reviewer  User? @relation("reviewer", fields: [reviewerId], references: [id])
+
+  @@index([status])
+  @@index([requesterId])
 }
 
 model Settings {
   id                String   @id @default("singleton")
   companyName       String   @default("Epa")
+  brandName         String   @default("Cash Buddy")
+  logoData          String?   @db.Text  // Logo en base64 (data URL), se adapta solo
+  termsAcceptedAt   DateTime?           // Fecha de aceptación de T&C (inicia garantía de 2 meses)
   initialCash       Int      @default(300000)
   initialBank       Int      @default(103130)
   setupComplete     Boolean  @default(false)
@@ -88,6 +134,18 @@ model Settings {
   // Porcentaje que cobra la empresa por cada domicilio Shipday
   shipdayCommission Float    @default(30)
   updatedAt         DateTime @updatedAt
+}
+
+model FieldNote {
+  id        String   @id @default(cuid())
+  date      String   @default("") // YYYY-MM-DD — día al que pertenece la nota
+  content   String   @db.Text
+  author    String?  // nombre de quien escribió
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([date])
+  @@index([createdAt])
 }
 
 model Worker {
@@ -129,6 +187,12 @@ model Movement {
   kind          MovementKind?
   deliveryId    String?
   deliveryValue Int?
+  taxAmount     Int?
+  createdBy     String?
+  createdByName String?
+  approvedBy    String?
+  approvedByName String?
+  approvedAt    DateTime?
   createdAt     DateTime       @default(now())
 
   day      Day     @relation(fields: [date], references: [date], onDelete: Cascade)
@@ -136,8 +200,10 @@ model Movement {
   workerId String?
 
   @@index([date])
+  @@index([date, status])
   @@index([workerId])
   @@index([kind])
+  @@index([status])
 }
 
 // ============================================================
@@ -185,6 +251,7 @@ model Driver {
 
   @@unique([shipdayDriverId, branchId])
   @@index([branchId])
+  @@index([pendingDebt])
 }
 
 model ShipdayOrder {
@@ -200,31 +267,40 @@ model ShipdayOrder {
   status          String
   deliveredAt     DateTime?
   rawData         Json?
+  clientId        String?
+  addToClientDebt Boolean   @default(false)
   createdAt       DateTime  @default(now())
 
-  branch Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  driver Driver? @relation(fields: [driverId], references: [id], onDelete: SetNull)
+  branch  Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  driver  Driver? @relation(fields: [driverId], references: [id], onDelete: SetNull)
+  client  Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
 
   @@index([branchId])
+  @@index([branchId, status])
   @@index([driverId])
   @@index([deliveredAt])
   @@index([status])
 }
 
 model BaseTransaction {
-  id       String   @id @default(cuid())
-  branchId String
-  driverId String
-  amount   Int
-  type     BaseType
-  notes    String?
-  date     DateTime @default(now())
+  id         String   @id @default(cuid())
+  branchId   String
+  driverId   String
+  amount     Int
+  cashAmount Int      @default(0)
+  bankAmount Int      @default(0)
+  type       BaseType
+  notes      String?
+  createdBy     String?
+  createdByName String?
+  date       DateTime @default(now())
 
   branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
   driver Driver @relation(fields: [driverId], references: [id], onDelete: Cascade)
 
   @@index([branchId])
   @@index([driverId])
+  @@index([driverId, type])
   @@index([date])
 }
 
@@ -235,6 +311,8 @@ model DriverPayment {
   amount   Int
   medium   Medium   @default(cash)
   notes    String?
+  createdBy     String?
+  createdByName String?
   date     DateTime @default(now())
 
   driver Driver @relation(fields: [driverId], references: [id], onDelete: Cascade)
@@ -244,18 +322,22 @@ model DriverPayment {
 }
 
 model Conversion {
-  id       String         @id @default(cuid())
-  branchId String
-  amount   Int
-  type     ConversionType
-  notes    String?
-  userId   String?
-  date     DateTime       @default(now())
+  id         String         @id @default(cuid())
+  branchId   String
+  amount     Int
+  type       ConversionType
+  notes      String?
+  userId     String?
+  userName   String?
+  driverId   String?        // domiciliario asociado (opcional)
+  driverName String?        // nombre cacheado para historial
+  date       DateTime       @default(now())
 
   branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
 
   @@index([branchId])
   @@index([date])
+  @@index([driverId])
 }
 
 model DailyDriverStat {
@@ -273,24 +355,126 @@ model DailyDriverStat {
   @@unique([date, driverId])
   @@index([branchId])
   @@index([date])
+  @@index([date, branchId])
 }
 
 model MonthlyClose {
-  id           String   @id @default(cuid())
-  branchId     String?
-  month        String   // YYYY-MM
-  totalOrders  Int
-  totalValue   Int
-  companyTotal Int
-  basesGiven   Int
-  basesPaid    Int
-  basesPending Int
-  conversions  Json
-  snapshot     Json
-  closedAt     DateTime @default(now())
+  id              String   @id @default(cuid())
+  branchId        String?
+  month           String   // YYYY-MM
+  totalOrders     Int
+  totalValue      Int
+  companyTotal    Int
+  basesGiven      Int
+  basesPaid       Int
+  basesPending    Int
+  conversions     Json
+  snapshot        Json
+  initialCash     Int?
+  initialBank     Int?
+  // Indicadores del reporte mensual (estilo Excel)
+  totalSales        Int?
+  totalExpenses     Int?
+  totalPayroll      Int?
+  transferDiff      Int?
+  clientDebtBalance Int?
+  netProfit         Int?
+  profitability     Float?
+  closedBy          String?
+  closedByName      String?
+  closedAt        DateTime @default(now())
 
   branch Branch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
 
   @@unique([month, branchId])
   @@index([month])
+}
+
+// ============================================================
+// NUEVOS MODELOS
+// ============================================================
+
+model Client {
+  id          String   @id @default(cuid())
+  name        String
+  phone       String?
+  email       String?
+  address     String?
+  notes       String?
+  pendingDebt Int      @default(0)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  debts  ClientDebt[]
+  orders ShipdayOrder[]
+}
+
+model ClientDebt {
+  id          String   @id @default(cuid())
+  clientId    String
+  description String
+  amount      Int
+  paid        Boolean  @default(false)
+  paidAt      DateTime?
+  paidAmount  Int?
+  paidCash    Int      @default(0)
+  paidBank    Int      @default(0)
+  createdBy     String?
+  createdByName String?
+  paidBy        String?
+  paidByName    String?
+  createdAt   DateTime @default(now())
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+  @@index([clientId, paid])
+  @@index([paid])
+}
+
+model BankTransaction {
+  id          String     @id @default(cuid())
+  type        BankTxType
+  medium      Medium     @default(bank) // efectivo o transferencia(banco)
+  amount      Int
+  description String
+  reference   String?
+  driverId    String?    // domiciliario asociado (opcional, solo trazabilidad)
+  driverName  String?    // nombre cacheado para historial
+  groupId     String?    // enlaza las dos mitades de un movimiento mixto (efectivo+transferencia)
+  pairId      String?    // enlaza un movimiento con su contraparte (salida ↔ retorno) de forma explícita
+  createdBy     String?
+  createdByName String?
+  date        DateTime   @default(now())
+  createdAt   DateTime   @default(now())
+
+  @@index([date])
+  @@index([type])
+  @@index([driverId])
+  @@index([groupId])
+  @@index([pairId])
+}
+
+model ShiftClose {
+  id          String     @id @default(cuid())
+  date        String     // YYYY-MM-DD
+  shift       ShiftSlot
+  receivedBy  String?
+  handedBy    String?
+  denominations Json
+  totalCounted  Int
+  totalExpected Int
+  difference    Int
+  notes         String?
+  createdBy     String?
+  createdByName String?
+  // Edición autorizada de cierres
+  editedBy      String?
+  editedByName  String?
+  editedAt      DateTime?
+  closedAt    DateTime   @default(now())
+
+  @@unique([date, shift])
+  @@index([date])
 }

@@ -28,11 +28,11 @@ export default function DeudasPage() {
 
   useEffect(() => { load(); }, [branchId]);
 
-  // Refresco en vivo cada 3s sin spinner
+  // Refresco en vivo cada 12s sin spinner
   useEffect(() => {
     const t = setInterval(() => {
       api.getDebtsDashboard(branchId || undefined).then(setDebts).catch(() => {});
-    }, 3_000);
+    }, 12_000);
     return () => clearInterval(t);
   }, [branchId]);
 

@@ -40,6 +40,32 @@ export async function ensureDay(date: string): Promise<DayData> {
   return toDayData(created);
 }
 
+/**
+ * Saldo de apertura (efectivo y banco) para una fecha, ACUMULANDO desde el día
+ * previo. El mes arranca con el capital inicial (Settings) y cada día abre con el
+ * cierre del día anterior; el dinero se va sumando, no se reinicia diariamente.
+ */
+export async function getOpeningBalance(date: string): Promise<{ cash: number; bank: number }> {
+  // Si el día ya existe, su initialCash/Bank ya es el arrastre.
+  const existing = await prisma.day.findUnique({ where: { date } });
+  if (existing) return { cash: existing.initialCash, bank: existing.initialBank };
+
+  // Si no existe, calcular desde el último día previo con datos.
+  const prev = await prisma.day.findFirst({
+    where: { date: { lt: date } },
+    orderBy: { date: "desc" },
+    include: { movements: true },
+  });
+  if (prev) {
+    const bal = balancesAtEndOfDay(prev.movements.map(toMovement), prev.initialCash, prev.initialBank);
+    return { cash: bal.cash, bank: bal.bank };
+  }
+
+  // No hay historial: usar el capital inicial configurado.
+  const settings = await getSettings();
+  return { cash: settings.initialCash, bank: settings.initialBank };
+}
+
 export async function getDay(date: string): Promise<DayData> {
   const day = await prisma.day.findUnique({
     where: { date },
@@ -51,7 +77,12 @@ export async function getDay(date: string): Promise<DayData> {
 }
 
 export async function listDays(): Promise<DayData[]> {
+  // Acota a los últimos ~90 días para no inflar memoria con todo el histórico
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 90);
+  const cutoffStr = cutoff.toISOString().slice(0, 10);
   const days = await prisma.day.findMany({
+    where: { date: { gte: cutoffStr } },
     orderBy: { date: "asc" },
     include: { movements: { orderBy: { createdAt: "asc" } } },
   });

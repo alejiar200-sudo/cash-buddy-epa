@@ -1,0 +1,13 @@
+-- CreateTable
+CREATE TABLE "FieldNote" (
+    "id" TEXT NOT NULL,
+    "content" TEXT NOT NULL,
+    "author" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "FieldNote_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE INDEX "FieldNote_createdAt_idx" ON "FieldNote"("createdAt");

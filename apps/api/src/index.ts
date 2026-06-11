@@ -5,6 +5,7 @@ import { createServer } from "./server";
 import { prisma } from "./lib/prisma";
 import { autoInit } from "./services/auto-init.service";
 import { startSyncScheduler } from "./services/sync-scheduler.service";
+import { scheduleOrderCleanup } from "./services/order-cleanup.service";
 
 // Resuelve la carpeta del frontend estático.
 // 1) WEB_DIR explícito  2) apps/web/out relativo al monorepo
@@ -34,6 +35,7 @@ async function main() {
   });
 
   startSyncScheduler();
+  scheduleOrderCleanup();
 
   const shutdown = async () => {
     console.log("\n  Cerrando servidor...");

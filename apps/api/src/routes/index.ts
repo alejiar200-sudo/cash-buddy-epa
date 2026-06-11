@@ -17,6 +17,14 @@ import * as sdDashboard from "../controllers/shipday-dashboard.controller";
 import * as close from "../controllers/close.controller";
 import * as webhook from "../controllers/webhook.controller";
 import * as order from "../controllers/order.controller";
+import * as client from "../controllers/client.controller";
+import * as bankTx from "../controllers/bank-transaction.controller";
+import * as shiftClose from "../controllers/shift-close.controller";
+import * as unifiedMov from "../controllers/unified-movements.controller";
+import * as users from "../controllers/user.controller";
+import * as editReq from "../controllers/edit-request.controller";
+import * as network from "../controllers/network.controller";
+import * as fieldNote from "../controllers/field-note.controller";
 import {
   createMovementSchema,
   createWorkerSchema,
@@ -31,6 +39,9 @@ import {
 export const apiRouter = Router();
 
 apiRouter.get("/health", (_req, res) => res.json({ ok: true }));
+
+// ─── Branding público (logo + nombre, sin auth para la pantalla de login) ──────
+apiRouter.get("/branding", asyncHandler(settings.branding));
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 apiRouter.post("/auth/login", validate(loginSchema), asyncHandler(auth.login));
@@ -47,11 +58,17 @@ apiRouter.use(requireAuth);
 apiRouter.get("/settings", asyncHandler(settings.get));
 apiRouter.patch("/settings", validate(updateSettingsSchema), asyncHandler(settings.update));
 
+// ─── Libreta de campo ─────────────────────────────────────────────────────────
+apiRouter.get("/field-notes", asyncHandler(fieldNote.list));
+apiRouter.post("/field-notes", asyncHandler(fieldNote.create));
+apiRouter.patch("/field-notes/:id", asyncHandler(fieldNote.update));
+apiRouter.delete("/field-notes/:id", asyncHandler(fieldNote.remove));
+
 // ─── Workers (sistema original) ───────────────────────────────────────────────
 apiRouter.get("/workers", asyncHandler(workers.list));
 apiRouter.post("/workers", validate(createWorkerSchema), asyncHandler(workers.create));
 apiRouter.patch("/workers/:id", validate(updateWorkerSchema), asyncHandler(workers.update));
-apiRouter.delete("/workers/:id", asyncHandler(workers.remove));
+apiRouter.delete("/workers/:id", requireAdmin, asyncHandler(workers.remove));
 
 // ─── Days / Arqueos ───────────────────────────────────────────────────────────
 apiRouter.get("/days", asyncHandler(days.list));
@@ -60,9 +77,12 @@ apiRouter.put("/days/:date/arqueo", validate(updateArqueoSchema), asyncHandler(d
 
 // ─── Movements ────────────────────────────────────────────────────────────────
 apiRouter.get("/movements", asyncHandler(movements.list));
+apiRouter.get("/movements/pending", asyncHandler(movements.pending));
+apiRouter.post("/movements/:id/approve", requireAdmin, asyncHandler(movements.approve));
+apiRouter.post("/movements/:id/reject", requireAdmin, asyncHandler(movements.reject));
 apiRouter.post("/movements", validate(createMovementSchema), asyncHandler(movements.create));
 apiRouter.patch("/movements/:id", validate(updateMovementSchema), asyncHandler(movements.update));
-apiRouter.delete("/movements/:id", asyncHandler(movements.remove));
+apiRouter.delete("/movements/:id", requireAdmin, asyncHandler(movements.remove));
 
 // ─── Reports (sistema original) ───────────────────────────────────────────────
 apiRouter.get("/reports/couriers/:date", asyncHandler(reports.couriersByDay));
@@ -100,10 +120,11 @@ apiRouter.get("/sd/bases/:driverId/summary", asyncHandler(base.summary));
 // ─── Conversiones ─────────────────────────────────────────────────────────────
 apiRouter.get("/sd/conversions", asyncHandler(conversion.list));
 apiRouter.post("/sd/conversions", asyncHandler(conversion.create));
-apiRouter.delete("/sd/conversions/:id", asyncHandler(conversion.remove));
+apiRouter.delete("/sd/conversions/:id", requireAdmin, asyncHandler(conversion.remove));
 
 // ─── Dashboard Shipday ────────────────────────────────────────────────────────
 apiRouter.get("/sd/dashboard", asyncHandler(sdDashboard.dashboard));
+apiRouter.get("/sd/dashboard/full", asyncHandler(sdDashboard.dashboardFull));
 apiRouter.get("/sd/dashboard/daily/:date", asyncHandler(sdDashboard.dailyStats));
 apiRouter.get("/sd/dashboard/debts", asyncHandler(sdDashboard.debtsDashboard));
 apiRouter.get("/sd/dashboard/orders/:branchId", asyncHandler(sdDashboard.ordersByBranch));
@@ -114,5 +135,50 @@ apiRouter.post("/sd/orders/manual", asyncHandler(order.manualCreate));
 // ─── Cierres mensuales ────────────────────────────────────────────────────────
 apiRouter.get("/sd/closes", asyncHandler(close.list));
 apiRouter.post("/sd/closes", asyncHandler(close.close));
+apiRouter.get("/sd/report/:month", asyncHandler(close.report));
+apiRouter.get("/sd/projection/:month", asyncHandler(close.projection));
 apiRouter.get("/sd/closes/:id", asyncHandler(close.get));
 apiRouter.get("/sd/closes/export/:month", asyncHandler(close.exportExcel));
+
+// ─── Clientes ─────────────────────────────────────────────────────────────────
+apiRouter.get("/clients", asyncHandler(client.list));
+apiRouter.get("/clients/debtors", asyncHandler(client.debtors));
+apiRouter.get("/clients/:id", asyncHandler(client.get));
+apiRouter.post("/clients", asyncHandler(client.create));
+apiRouter.patch("/clients/:id", asyncHandler(client.update));
+apiRouter.delete("/clients/:id", requireAdmin, asyncHandler(client.remove));
+apiRouter.post("/clients/:id/debt", asyncHandler(client.addDebt));
+apiRouter.post("/clients/:id/pay", asyncHandler(client.payClient));
+apiRouter.post("/clients/debts/:id/pay", asyncHandler(client.payDebt));
+
+// ─── Transacciones bancarias ──────────────────────────────────────────────────
+apiRouter.get("/bank-transactions", asyncHandler(bankTx.list));
+apiRouter.get("/bank-transactions/summary", asyncHandler(bankTx.summary));
+apiRouter.post("/bank-transactions", asyncHandler(bankTx.create));
+apiRouter.delete("/bank-transactions/:id", requireAdmin, asyncHandler(bankTx.remove));
+
+// ─── Cierres de turno ─────────────────────────────────────────────────────────
+apiRouter.get("/shifts", asyncHandler(shiftClose.list));
+apiRouter.get("/shifts/:date/expected", asyncHandler(shiftClose.expectedForDate));
+apiRouter.get("/shifts/:date", asyncHandler(shiftClose.getForDate));
+apiRouter.post("/shifts", asyncHandler(shiftClose.register));
+
+// ─── Movimientos unificados (todos los sistemas) ──────────────────────────────
+apiRouter.get("/movements/unified", asyncHandler(unifiedMov.list));
+
+// ─── URL de acceso local en la red ────────────────────────────────────────────
+apiRouter.get("/network/local-urls", asyncHandler(network.localUrls));
+
+// ─── Usuarios (solo admin) ────────────────────────────────────────────────────
+apiRouter.get("/users", requireAdmin, asyncHandler(users.list));
+apiRouter.post("/users", requireAdmin, asyncHandler(users.create));
+apiRouter.patch("/users/:id", requireAdmin, asyncHandler(users.update));
+apiRouter.delete("/users/:id", requireAdmin, asyncHandler(users.remove));
+
+// ─── Solicitudes de edición ───────────────────────────────────────────────────
+// Crear: cualquier usuario autenticado. Listar/revisar: solo admin.
+apiRouter.get("/edit-requests", requireAdmin, asyncHandler(editReq.list));
+apiRouter.get("/edit-requests/count", asyncHandler(editReq.countPending));
+apiRouter.post("/edit-requests", asyncHandler(editReq.create));
+apiRouter.post("/edit-requests/:id/review", requireAdmin, asyncHandler(editReq.review));
+apiRouter.post("/admin/recalc-orders", requireAdmin, asyncHandler(editReq.recalcOrders));

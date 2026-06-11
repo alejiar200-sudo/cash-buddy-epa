@@ -11,6 +11,9 @@ export async function getSettings(): Promise<Settings> {
   });
   return {
     companyName: s.companyName,
+    brandName: s.brandName,
+    logoData: s.logoData,
+    termsAcceptedAt: s.termsAcceptedAt ? s.termsAcceptedAt.toISOString() : null,
     initialCash: s.initialCash,
     initialBank: s.initialBank,
     setupComplete: s.setupComplete,
@@ -26,6 +29,9 @@ export async function updateSettings(patch: UpdateSettingsRequest): Promise<Sett
   });
   return {
     companyName: s.companyName,
+    brandName: s.brandName,
+    logoData: s.logoData,
+    termsAcceptedAt: s.termsAcceptedAt ? s.termsAcceptedAt.toISOString() : null,
     initialCash: s.initialCash,
     initialBank: s.initialBank,
     setupComplete: s.setupComplete,

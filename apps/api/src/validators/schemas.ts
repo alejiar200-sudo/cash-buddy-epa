@@ -33,6 +33,8 @@ export const createMovementSchema = z.object({
   kind: z.enum(["commission", "delivery"]).nullish(),
   deliveryId: z.string().nullish(),
   deliveryValue: z.number().int().nullish(),
+  taxAmount: z.number().int().nullish(),
+  createdBy: z.string().nullish(),
 });
 
 export const updateMovementSchema = createMovementSchema.partial();
@@ -48,6 +50,9 @@ export const updateWorkerSchema = createWorkerSchema.partial();
 
 export const updateSettingsSchema = z.object({
   companyName: z.string().optional(),
+  brandName: z.string().optional(),
+  logoData: z.string().nullable().optional(),
+  termsAcceptedAt: z.string().nullable().optional(),
   initialCash: z.number().int().optional(),
   initialBank: z.number().int().optional(),
   setupComplete: z.boolean().optional(),

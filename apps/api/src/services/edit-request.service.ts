@@ -1,0 +1,363 @@
+import { prisma } from "../lib/prisma";
+import { notFound, badRequest } from "../lib/errors";
+
+type ChangeMap = Record<string, { old: string; new: string }>;
+
+export async function listRequests(status?: "pending" | "approved" | "rejected") {
+  return prisma.editRequest.findMany({
+    where: status ? { status } : undefined,
+    include: {
+      requester: { select: { id: true, name: true, email: true } },
+      reviewer: { select: { id: true, name: true } },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+export async function countPending() {
+  return prisma.editRequest.count({ where: { status: "pending" } });
+}
+
+export async function createRequest(data: {
+  requesterId: string;
+  entityType: string;
+  entityId: string;
+  entityLabel: string;
+  changes: ChangeMap;
+  reason: string;
+  requestType?: "edit" | "delete";
+}) {
+  if (!data.reason.trim()) throw badRequest("Debes indicar el motivo");
+  const requestType = data.requestType ?? "edit";
+  if (requestType === "edit" && Object.keys(data.changes).length === 0) {
+    throw badRequest("Debes especificar al menos un campo a cambiar");
+  }
+  return prisma.editRequest.create({
+    data: {
+      requesterId: data.requesterId,
+      requestType,
+      entityType: data.entityType,
+      entityId: data.entityId,
+      entityLabel: data.entityLabel,
+      changes: data.changes,
+      reason: data.reason,
+    },
+    include: {
+      requester: { select: { id: true, name: true } },
+    },
+  });
+}
+
+export async function reviewRequest(id: string, reviewerId: string, action: "approved" | "rejected", notes?: string) {
+  const req = await prisma.editRequest.findUnique({ where: { id } });
+  if (!req) throw notFound("Solicitud no encontrada");
+  if (req.status !== "pending") throw badRequest("Esta solicitud ya fue procesada");
+
+  // Actualizar estado de la solicitud
+  const updated = await prisma.editRequest.update({
+    where: { id },
+    data: {
+      status: action,
+      reviewerId,
+      reviewNotes: notes ?? null,
+      reviewedAt: new Date(),
+    },
+    include: {
+      requester: { select: { id: true, name: true, email: true } },
+    },
+  });
+
+  // Si se aprueba, aplicar el cambio o la eliminación automáticamente
+  if (action === "approved") {
+    if (req.requestType === "delete") {
+      await deleteEntity(req.entityType, req.entityId);
+    } else {
+      const reviewer = await prisma.user.findUnique({ where: { id: reviewerId }, select: { name: true } });
+      await applyChanges(req.entityType, req.entityId, req.changes as ChangeMap, { id: reviewerId, name: reviewer?.name ?? null });
+    }
+  }
+
+  return updated;
+}
+
+// ── Eliminar entidad revirtiendo sus efectos en deudas/saldos ─────────────────
+async function deleteEntity(entityType: string, entityId: string) {
+  switch (entityType) {
+    case "ShipdayOrder": {
+      const order = await prisma.shipdayOrder.findUnique({ where: { id: entityId } });
+      if (!order) return;
+      await prisma.$transaction(async (tx) => {
+        // Revertir la comisión de la deuda del domiciliario
+        if (order.driverId && order.companyAmount > 0) {
+          await tx.driver.update({
+            where: { id: order.driverId },
+            data: { pendingDebt: { decrement: order.companyAmount } },
+          });
+        }
+        // Revertir stats diarias
+        if (order.driverId && order.deliveredAt) {
+          const dateStr = order.deliveredAt.toISOString().slice(0, 10);
+          const stat = await tx.dailyDriverStat.findUnique({
+            where: { date_driverId: { date: dateStr, driverId: order.driverId } },
+          });
+          if (stat) {
+            await tx.dailyDriverStat.update({
+              where: { date_driverId: { date: dateStr, driverId: order.driverId } },
+              data: {
+                orderCount: { decrement: 1 },
+                totalValue: { decrement: order.deliveryValue },
+                companyTotal: { decrement: order.companyAmount },
+              },
+            });
+          }
+        }
+        await tx.shipdayOrder.delete({ where: { id: entityId } });
+      });
+      break;
+    }
+    case "Movement":
+      await prisma.movement.delete({ where: { id: entityId } });
+      break;
+    case "BankTransaction":
+      await prisma.bankTransaction.delete({ where: { id: entityId } });
+      break;
+    case "DriverPayment": {
+      const payment = await prisma.driverPayment.findUnique({ where: { id: entityId } });
+      if (!payment) return;
+      await prisma.$transaction(async (tx) => {
+        // El pago reducía la deuda → al eliminarlo, la deuda vuelve a subir
+        await tx.driver.update({
+          where: { id: payment.driverId },
+          data: { pendingDebt: { increment: payment.amount } },
+        });
+        await tx.driverPayment.delete({ where: { id: entityId } });
+      });
+      break;
+    }
+    case "BaseTransaction": {
+      const base = await prisma.baseTransaction.findUnique({ where: { id: entityId } });
+      if (!base) return;
+      await prisma.$transaction(async (tx) => {
+        // entrega subía deuda (al borrar baja), pago bajaba deuda (al borrar sube)
+        const sign = base.type === "entrega" ? -1 : 1;
+        await tx.driver.update({
+          where: { id: base.driverId },
+          data: { pendingDebt: { increment: sign * base.amount } },
+        });
+        await tx.baseTransaction.delete({ where: { id: entityId } });
+      });
+      break;
+    }
+    case "ClientDebt": {
+      const debt = await prisma.clientDebt.findUnique({ where: { id: entityId } });
+      if (!debt) return;
+      await prisma.$transaction(async (tx) => {
+        // Si la deuda estaba pendiente, restarla del saldo del cliente
+        if (!debt.paid) {
+          await tx.client.update({
+            where: { id: debt.clientId },
+            data: { pendingDebt: { decrement: debt.amount } },
+          });
+        }
+        await tx.clientDebt.delete({ where: { id: entityId } });
+      });
+      break;
+    }
+    case "Conversion":
+      await prisma.conversion.delete({ where: { id: entityId } });
+      break;
+    default:
+      console.warn(`[delete-request] entityType desconocido: ${entityType}`);
+  }
+}
+
+// ── Recalcular companyAmount de TODOS los pedidos según la comisión actual ────
+// Corrige descuadres heredados y ajusta la deuda de los domiciliarios.
+export async function recalcAllOrders() {
+  const settings = await prisma.settings.findUnique({ where: { id: "singleton" } });
+  const commissionPercent = settings?.shipdayCommission ?? 30;
+  const orders = await prisma.shipdayOrder.findMany();
+  let fixed = 0;
+
+  for (const order of orders) {
+    const correct = Math.round(order.deliveryValue * (commissionPercent / 100));
+    if (correct !== order.companyAmount) {
+      const delta = correct - order.companyAmount;
+      await prisma.$transaction(async (tx) => {
+        await tx.shipdayOrder.update({ where: { id: order.id }, data: { companyAmount: correct } });
+        if (order.driverId && delta !== 0) {
+          await tx.driver.update({
+            where: { id: order.driverId },
+            data: { pendingDebt: { increment: delta } },
+          });
+        }
+      });
+      fixed++;
+    }
+  }
+  return { total: orders.length, fixed };
+}
+
+async function applyChanges(entityType: string, entityId: string, changes: ChangeMap, reviewer?: { id: string; name: string | null }) {
+  // Extraer solo los valores nuevos como objeto, con tipos correctos
+  const newValues: Record<string, unknown> = {};
+  for (const [field, val] of Object.entries(changes)) {
+    const raw = val.new;
+    const num = Number(raw);
+    newValues[field] = !isNaN(num) && raw.trim() !== "" ? num : raw;
+  }
+
+  switch (entityType) {
+    case "ShiftClose": {
+      // #2 — Edición de cierre de turno autorizada por el admin.
+      const sc = await prisma.shiftClose.findUnique({ where: { id: entityId } });
+      if (sc) {
+        const data: Record<string, unknown> = { ...newValues };
+        // Recalcular diferencia si cambió el total esperado o contado.
+        const totalExpected = (newValues.totalExpected as number) ?? sc.totalExpected;
+        const totalCounted = (newValues.totalCounted as number) ?? sc.totalCounted;
+        data.difference = totalCounted - totalExpected;
+        data.editedBy = reviewer?.id ?? null;
+        data.editedByName = reviewer?.name ?? null;
+        data.editedAt = new Date();
+        await prisma.shiftClose.update({ where: { id: entityId }, data });
+      }
+      break;
+    }
+    case "ShipdayOrder":
+      await applyShipdayOrderChange(entityId, newValues);
+      break;
+    case "Movement":
+      // El balance de caja se recalcula on-read desde los movimientos, así que solo actualizar
+      await prisma.movement.update({ where: { id: entityId }, data: newValues });
+      break;
+    case "BankTransaction":
+      // El balance de banco se recalcula on-read, solo actualizar
+      await prisma.bankTransaction.update({ where: { id: entityId }, data: newValues });
+      break;
+    case "DriverPayment":
+      await applyDriverPaymentChange(entityId, newValues);
+      break;
+    case "BaseTransaction":
+      await applyBaseTransactionChange(entityId, newValues);
+      break;
+    case "ClientDebt":
+      await applyClientDebtChange(entityId, newValues);
+      break;
+    case "Conversion":
+      await prisma.conversion.update({ where: { id: entityId }, data: newValues });
+      break;
+    default:
+      console.warn(`[edit-request] entityType desconocido: ${entityType}`);
+  }
+}
+
+// ── ShipdayOrder: recalcular % empresa, deuda del driver y stats diarias ──────
+async function applyShipdayOrderChange(orderId: string, newValues: Record<string, unknown>) {
+  const order = await prisma.shipdayOrder.findUnique({ where: { id: orderId } });
+  if (!order) throw new Error("Pedido no encontrado");
+
+  const newDeliveryValue = newValues.deliveryValue != null ? Number(newValues.deliveryValue) : order.deliveryValue;
+
+  // Recalcular companyAmount con el % de comisión actual
+  const settings = await prisma.settings.findUnique({ where: { id: "singleton" } });
+  const commissionPercent = settings?.shipdayCommission ?? 30;
+  const newCompanyAmount = Math.round(newDeliveryValue * (commissionPercent / 100));
+
+  const deltaCompany = newCompanyAmount - order.companyAmount;
+  const deltaValue = newDeliveryValue - order.deliveryValue;
+
+  await prisma.$transaction(async (tx) => {
+    // Actualizar el pedido con el valor nuevo + companyAmount recalculado
+    await tx.shipdayOrder.update({
+      where: { id: orderId },
+      data: { ...newValues, deliveryValue: newDeliveryValue, companyAmount: newCompanyAmount },
+    });
+
+    if (order.driverId && deltaCompany !== 0) {
+      // Ajustar la deuda del domiciliario por la diferencia de comisión
+      await tx.driver.update({
+        where: { id: order.driverId },
+        data: { pendingDebt: { increment: deltaCompany } },
+      });
+    }
+
+    // Ajustar las estadísticas diarias del domiciliario
+    if (order.driverId && order.deliveredAt) {
+      const dateStr = order.deliveredAt.toISOString().slice(0, 10);
+      const stat = await tx.dailyDriverStat.findUnique({
+        where: { date_driverId: { date: dateStr, driverId: order.driverId } },
+      });
+      if (stat) {
+        await tx.dailyDriverStat.update({
+          where: { date_driverId: { date: dateStr, driverId: order.driverId } },
+          data: {
+            totalValue: { increment: deltaValue },
+            companyTotal: { increment: deltaCompany },
+          },
+        });
+      }
+    }
+  });
+}
+
+// ── DriverPayment: ajustar deuda del driver por la diferencia ─────────────────
+async function applyDriverPaymentChange(paymentId: string, newValues: Record<string, unknown>) {
+  const payment = await prisma.driverPayment.findUnique({ where: { id: paymentId } });
+  if (!payment) throw new Error("Pago no encontrado");
+
+  const newAmount = newValues.amount != null ? Number(newValues.amount) : payment.amount;
+  const delta = newAmount - payment.amount;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.driverPayment.update({ where: { id: paymentId }, data: { ...newValues, amount: newAmount } });
+    if (delta !== 0) {
+      // Un pago mayor reduce más la deuda → pendingDebt -= delta
+      await tx.driver.update({
+        where: { id: payment.driverId },
+        data: { pendingDebt: { decrement: delta } },
+      });
+    }
+  });
+}
+
+// ── BaseTransaction: ajustar deuda del driver por la diferencia ───────────────
+async function applyBaseTransactionChange(baseId: string, newValues: Record<string, unknown>) {
+  const base = await prisma.baseTransaction.findUnique({ where: { id: baseId } });
+  if (!base) throw new Error("Base no encontrada");
+
+  const newAmount = newValues.amount != null ? Number(newValues.amount) : base.amount;
+  const delta = newAmount - base.amount;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.baseTransaction.update({ where: { id: baseId }, data: { ...newValues, amount: newAmount } });
+    if (delta !== 0) {
+      // entrega aumenta deuda, pago la reduce
+      const sign = base.type === "entrega" ? 1 : -1;
+      await tx.driver.update({
+        where: { id: base.driverId },
+        data: { pendingDebt: { increment: sign * delta } },
+      });
+    }
+  });
+}
+
+// ── ClientDebt: ajustar pendingDebt del cliente por la diferencia ─────────────
+async function applyClientDebtChange(debtId: string, newValues: Record<string, unknown>) {
+  const debt = await prisma.clientDebt.findUnique({ where: { id: debtId } });
+  if (!debt) throw new Error("Deuda no encontrada");
+
+  const newAmount = newValues.amount != null ? Number(newValues.amount) : debt.amount;
+  const delta = newAmount - debt.amount;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.clientDebt.update({ where: { id: debtId }, data: { ...newValues, amount: newAmount } });
+    // Solo afecta la deuda del cliente si la deuda sigue pendiente (no pagada)
+    if (delta !== 0 && !debt.paid) {
+      await tx.client.update({
+        where: { id: debt.clientId },
+        data: { pendingDebt: { increment: delta } },
+      });
+    }
+  });
+}

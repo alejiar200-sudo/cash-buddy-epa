@@ -17,7 +17,9 @@ export default function DomiciliariosShipdayPage() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Driver | null>(null);
   const [showTodayList, setShowTodayList] = useState(true);
+  const [search, setSearch] = useState("");
 
+  // Carga completa (con spinner) — incluye sucursales
   const load = async () => {
     setLoading(true);
     try {
@@ -35,11 +37,23 @@ export default function DomiciliariosShipdayPage() {
     setLoading(false);
   };
 
+  // Refresco silencioso — solo datos en vivo (sin sucursales ni spinner)
+  const refreshLive = async () => {
+    try {
+      const [d, t] = await Promise.all([
+        api.getDrivers(branchId || undefined),
+        api.getOrdersToday(branchId || undefined),
+      ]);
+      setDrivers(d);
+      setTodayOrders(t);
+    } catch { /* silencioso */ }
+  };
+
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [branchId]);
 
-  // Auto-refresh cada 3s para ver pedidos nuevos casi en vivo
+  // Auto-refresh cada 10s (refresco silencioso de datos en vivo)
   useEffect(() => {
-    const t = setInterval(load, 3_000);
+    const t = setInterval(refreshLive, 10_000);
     return () => clearInterval(t);
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [branchId]);
@@ -133,9 +147,19 @@ export default function DomiciliariosShipdayPage() {
 
       {/* Lista de domiciliarios */}
       <div className="glass-strong rounded-3xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-border">
-          <h2 className="font-black">Domiciliarios</h2>
-          <p className="text-xs text-muted-foreground">Click en un domiciliario para ver estado de cuenta y registrar pago</p>
+        <div className="px-5 py-4 border-b border-border flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="font-black">Domiciliarios</h2>
+            <p className="text-xs text-muted-foreground">Click en un domiciliario para ver estado de cuenta y registrar pago</p>
+          </div>
+          <div className="relative">
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="🔍 Buscar domiciliario…"
+              className="px-4 py-2 rounded-xl border border-border bg-background text-sm w-56 outline-none focus:ring-2 focus:ring-primary/30"
+            />
+          </div>
         </div>
         {loading && drivers.length === 0 ? (
           <p className="text-center py-12 text-muted-foreground">Cargando...</p>
@@ -153,7 +177,7 @@ export default function DomiciliariosShipdayPage() {
                 </tr>
               </thead>
               <tbody>
-                {drivers.map(d => {
+                {drivers.filter(d => !search.trim() || d.name.toLowerCase().includes(search.toLowerCase())).map(d => {
                   const stat = todayByDriver.find(g => g.driverId === d.id);
                   return (
                     <tr key={d.id} className="border-b border-border/50 hover:bg-secondary/30 transition cursor-pointer" onClick={() => setSelected(d)}>

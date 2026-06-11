@@ -1,7 +1,23 @@
 import { prisma } from "../lib/prisma";
-import { encryptApiKey, decryptApiKey } from "../lib/crypto";
+import { encryptApiKey, decryptApiKey, DecryptError } from "../lib/crypto";
 import * as shipday from "./shipday.service";
 import { notFound, conflict } from "../lib/errors";
+
+// ─── Cache de settings (evita 1 query por cada orden sincronizada) ────────────
+let _settingsCache: { shipdayCommission: number } | null = null;
+let _settingsCacheAt = 0;
+const SETTINGS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
+
+async function getCachedCommission(): Promise<number> {
+  const now = Date.now();
+  if (_settingsCache && now - _settingsCacheAt < SETTINGS_CACHE_TTL_MS) {
+    return _settingsCache.shipdayCommission;
+  }
+  const s = await prisma.settings.findUnique({ where: { id: "singleton" } });
+  _settingsCache = { shipdayCommission: s?.shipdayCommission ?? 30 };
+  _settingsCacheAt = now;
+  return _settingsCache.shipdayCommission;
+}
 
 export interface BranchInput {
   name: string;
@@ -89,7 +105,21 @@ const activeOrdersByBranch = new Map<string, Map<string, ActiveOrderSnapshot>>()
 export async function syncBranch(id: string): Promise<{ drivers: number; orders: number }> {
   const branch = await prisma.branch.findUnique({ where: { id } });
   if (!branch) throw notFound("Sucursal no encontrada");
-  const apiKey = decryptApiKey(branch.apiKeyEnc);
+
+  let apiKey: string;
+  try {
+    apiKey = decryptApiKey(branch.apiKeyEnc);
+  } catch (err) {
+    // Error de descifrado: marcar estado claro y accionable (no silencioso).
+    const msg = err instanceof DecryptError
+      ? err.message
+      : "Error al leer la API Key. Vuelve a guardarla en la sucursal.";
+    await prisma.branch.update({
+      where: { id },
+      data: { syncStatus: "error", syncMessage: msg },
+    });
+    throw err;
+  }
 
   let driversCount = 0;
   let ordersCount = 0;
@@ -122,7 +152,7 @@ export async function syncBranch(id: string): Promise<{ drivers: number; orders:
     //    Los activos quedan en caché en memoria; cuando desaparecen del feed,
     //    asumimos entrega y recién ahí se persiste el pedido + se acumula deuda.
     const allActiveOrders = await shipday.getAllOrders(apiKey);
-    const commissionPercent = await getCommissionPercent();
+    const commissionPercent = await getCachedCommission();
     const previousActive = activeOrdersByBranch.get(id) ?? new Map<string, ActiveOrderSnapshot>();
     const nextActive = new Map<string, ActiveOrderSnapshot>();
 
@@ -243,34 +273,38 @@ async function persistDeliveredOrder(branchId: string, shipdayOrderId: string, p
     driverId = d?.id ?? null;
   }
 
-  await prisma.shipdayOrder.create({
-    data: {
-      shipdayOrderId,
-      branchId,
-      driverId,
-      orderNumber: p.orderNumber,
-      deliveryValue: p.deliveryValue,
-      companyAmount,
-      customerName: p.customerName,
-      customerAddress: p.customerAddress,
-      status: "DELIVERED",
-      deliveredAt: p.deliveredAt,
-      rawData: p.raw,
-    },
-  });
+  const dateStr = p.deliveredAt.toISOString().slice(0, 10);
 
-  if (driverId && companyAmount > 0) {
-    await prisma.driver.update({
-      where: { id: driverId },
-      data: { pendingDebt: { increment: companyAmount } },
+  // Todas las escrituras en una sola transacción — previene datos inconsistentes en crash
+  await prisma.$transaction(async (tx) => {
+    await tx.shipdayOrder.create({
+      data: {
+        shipdayOrderId,
+        branchId,
+        driverId,
+        orderNumber: p.orderNumber,
+        deliveryValue: p.deliveryValue,
+        companyAmount,
+        customerName: p.customerName,
+        customerAddress: p.customerAddress,
+        status: "DELIVERED",
+        deliveredAt: p.deliveredAt,
+        rawData: p.raw,
+      },
     });
-    const dateStr = p.deliveredAt.toISOString().slice(0, 10);
-    await prisma.dailyDriverStat.upsert({
-      where: { date_driverId: { date: dateStr, driverId } },
-      create: { date: dateStr, branchId, driverId, orderCount: 1, totalValue: p.deliveryValue, companyTotal: companyAmount },
-      update: { orderCount: { increment: 1 }, totalValue: { increment: p.deliveryValue }, companyTotal: { increment: companyAmount } },
-    });
-  }
+
+    if (driverId && companyAmount > 0) {
+      await tx.driver.update({
+        where: { id: driverId },
+        data: { pendingDebt: { increment: companyAmount } },
+      });
+      await tx.dailyDriverStat.upsert({
+        where: { date_driverId: { date: dateStr, driverId } },
+        create: { date: dateStr, branchId, driverId, orderCount: 1, totalValue: p.deliveryValue, companyTotal: companyAmount },
+        update: { orderCount: { increment: 1 }, totalValue: { increment: p.deliveryValue }, companyTotal: { increment: companyAmount } },
+      });
+    }
+  });
 
   return true;
 }

@@ -11,9 +11,10 @@ function toAuthUser(u: { id: string; email: string; name: string; role: "admin" 
 export async function login(input: LoginRequest): Promise<AuthResponse> {
   const user = await prisma.user.findUnique({ where: { email: input.email.toLowerCase() } });
   if (!user) throw unauthorized("Credenciales inválidas");
+  if (!user.active) throw unauthorized("Tu cuenta está desactivada. Contacta al administrador.");
   const ok = await bcrypt.compare(input.password, user.passwordHash);
   if (!ok) throw unauthorized("Credenciales inválidas");
-  const token = signToken({ sub: user.id, email: user.email, role: user.role });
+  const token = signToken({ sub: user.id, email: user.email, name: user.name, role: user.role });
   return { token, user: toAuthUser(user) };
 }
 
@@ -28,7 +29,7 @@ export async function register(input: RegisterRequest): Promise<AuthResponse> {
   const user = await prisma.user.create({
     data: { email, name: input.name, passwordHash, role },
   });
-  const token = signToken({ sub: user.id, email: user.email, role: user.role });
+  const token = signToken({ sub: user.id, email: user.email, name: user.name, role: user.role });
   return { token, user: toAuthUser(user) };
 }
 

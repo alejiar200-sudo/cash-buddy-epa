@@ -25,6 +25,9 @@ export async function addMovement(input: CreateMovementRequest): Promise<Movemen
       kind: input.kind ?? null,
       deliveryId: input.deliveryId ?? null,
       deliveryValue: input.deliveryValue ?? null,
+      taxAmount: (input as unknown as { taxAmount?: number }).taxAmount ?? null,
+      createdBy: (input as unknown as { createdBy?: string }).createdBy ?? null,
+      createdByName: (input as unknown as { createdByName?: string }).createdByName ?? null,
     },
   });
   return toMovement(row);
@@ -52,4 +55,30 @@ export async function listMovements(date?: string): Promise<Movement[]> {
     orderBy: [{ date: "asc" }, { createdAt: "asc" }],
   });
   return rows.map(toMovement);
+}
+
+// ── Aprobación de gastos ──────────────────────────────────────────────────────
+export async function listPendingMovements() {
+  const rows = await prisma.movement.findMany({
+    where: { status: "pending" },
+    orderBy: { createdAt: "desc" },
+    include: { worker: { select: { name: true } } },
+  });
+  return rows;
+}
+
+export async function approveMovement(id: string, approverId: string, approverName?: string | null) {
+  const m = await prisma.movement.findUnique({ where: { id } });
+  if (!m) throw notFound("Movimiento no encontrado");
+  return prisma.movement.update({
+    where: { id },
+    data: { status: "confirmed", approvedBy: approverId, approvedByName: approverName ?? null, approvedAt: new Date() },
+  });
+}
+
+export async function rejectMovement(id: string) {
+  const m = await prisma.movement.findUnique({ where: { id } });
+  if (!m) throw notFound("Movimiento no encontrado");
+  await prisma.movement.delete({ where: { id } });
+  return { ok: true };
 }
