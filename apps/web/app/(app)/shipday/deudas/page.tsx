@@ -17,29 +17,42 @@ export default function DeudasPage() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<DriverDebt | null>(null);
 
+  function parseResponse(raw: unknown) {
+    if (!raw || typeof raw !== "object") return { debtors: [], creditors: [] };
+    if (Array.isArray(raw)) return { debtors: raw as DriverDebt[], creditors: [] };
+    const r = raw as { debtors?: DriverDebt[]; creditors?: DriverDebt[] };
+    return { debtors: r.debtors ?? [], creditors: r.creditors ?? [] };
+  }
+
   const load = async () => {
     setLoading(true);
     try {
-      const [d, b] = await Promise.all([api.getDebtsDashboard(branchId || undefined), api.getBranches()]);
-      setDebtors(d.debtors);
-      setCreditors(d.creditors);
+      const [raw, b] = await Promise.all([api.getDebtsDashboard(branchId || undefined), api.getBranches()]);
+      const { debtors: d, creditors: c } = parseResponse(raw);
+      setDebtors(d);
+      setCreditors(c);
       setBranches(b);
     } catch { toast.error("Error al cargar deudas"); }
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, [branchId]);
+  useEffect(() => { load(); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branchId]);
 
   useEffect(() => {
     const t = setInterval(() => {
-      api.getDebtsDashboard(branchId || undefined).then(d => { setDebtors(d.debtors); setCreditors(d.creditors); }).catch(() => {});
+      api.getDebtsDashboard(branchId || undefined).then(raw => {
+        const { debtors: d, creditors: c } = parseResponse(raw);
+        setDebtors(d); setCreditors(c);
+      }).catch(() => {});
     }, 12_000);
     return () => clearInterval(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [branchId]);
 
-  const totalDebt = debtors.reduce((s, d) => s + d.pendingDebt, 0);
-  const totalCredit = creditors.reduce((s, d) => s + d.creditAmount, 0);
-  const highDebt = debtors.filter(d => d.pendingDebt > 100000);
+  const totalDebt = (debtors ?? []).reduce((s, d) => s + (d.pendingDebt ?? 0), 0);
+  const totalCredit = (creditors ?? []).reduce((s, d) => s + (d.creditAmount ?? 0), 0);
+  const highDebt = (debtors ?? []).filter(d => d.pendingDebt > 100000);
 
   return (
     <div className="space-y-6">
