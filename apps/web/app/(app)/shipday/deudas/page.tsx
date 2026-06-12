@@ -16,6 +16,7 @@ export default function DeudasPage() {
   const [branchId, setBranchId] = useState("");
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<DriverDebt | null>(null);
+  const [paying, setPaying] = useState<DriverDebt | null>(null);
 
   function parseResponse(raw: unknown) {
     if (!raw || typeof raw !== "object") return { debtors: [], creditors: [] };
@@ -185,8 +186,8 @@ export default function DeudasPage() {
                         </span>
                       </td>
                       <td className="px-5 py-3 text-right">
-                        <button onClick={() => setSelected(d)} className="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-xs font-bold hover:opacity-90 transition">
-                          Ver estado
+                        <button onClick={() => setPaying(d)} className="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-xs font-bold hover:opacity-90 transition">
+                          Pagar a domiciliario
                         </button>
                       </td>
                     </tr>
@@ -212,6 +213,81 @@ export default function DeudasPage() {
           onRefresh={load}
         />
       )}
+
+      {paying && (
+        <PayCreditModal
+          driver={paying}
+          onClose={() => setPaying(null)}
+          onDone={() => { setPaying(null); load(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function PayCreditModal({ driver, onClose, onDone }: { driver: DriverDebt; onClose: () => void; onDone: () => void }) {
+  const [loading, setLoading] = useState(false);
+  const suggestedMedium = (driver.creditMedium === "cash" ? "cash" : "bank") as "cash" | "bank";
+  const [medium, setMedium] = useState<"cash" | "bank">(suggestedMedium);
+
+  async function pay() {
+    setLoading(true);
+    try {
+      await api.payDriverCredit(driver.id, medium);
+      toast.success(`Pago registrado a ${driver.name}`);
+      onDone();
+    } catch (e) { toast.error(String(e)); }
+    setLoading(false);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="glass-strong rounded-3xl p-6 w-full max-w-sm space-y-5 shadow-2xl">
+        <div className="flex items-center justify-between">
+          <h2 className="font-black text-lg">Pagar a domiciliario</h2>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-secondary transition text-muted-foreground">✕</button>
+        </div>
+
+        <div className="bg-amber-500/10 rounded-2xl p-4 border border-amber-500/20 text-center">
+          <p className="font-bold text-amber-700 dark:text-amber-400">{driver.name}</p>
+          <p className="text-3xl font-black tnum mt-1">{formatCOP(driver.creditAmount)}</p>
+          <p className="text-xs text-muted-foreground mt-1">La empresa le debe este valor</p>
+        </div>
+
+        <div className="space-y-2">
+          <p className="text-sm font-bold">¿Cómo sale el dinero de la empresa?</p>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => setMedium("cash")}
+              className={`py-3 rounded-xl font-bold text-sm border-2 transition ${medium === "cash" ? "border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-400" : "border-border hover:bg-secondary"}`}
+            >
+              💵 Efectivo
+            </button>
+            <button
+              onClick={() => setMedium("bank")}
+              className={`py-3 rounded-xl font-bold text-sm border-2 transition ${medium === "bank" ? "border-blue-500 bg-blue-500/10 text-blue-700 dark:text-blue-400" : "border-border hover:bg-secondary"}`}
+            >
+              🏦 Transferencia
+            </button>
+          </div>
+          {medium !== suggestedMedium && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              ⚠️ El ingreso original entró por {suggestedMedium === "cash" ? "efectivo" : "transferencia"}
+            </p>
+          )}
+        </div>
+
+        <div className="flex gap-2">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-border text-sm font-bold hover:bg-secondary transition">Cancelar</button>
+          <button
+            onClick={pay}
+            disabled={loading}
+            className="flex-1 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-bold hover:opacity-90 transition disabled:opacity-50"
+          >
+            {loading ? "Registrando…" : `Pagar ${formatCOP(driver.creditAmount)}`}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

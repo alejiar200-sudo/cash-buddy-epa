@@ -20,6 +20,11 @@ export async function registerPayment(req: Request, res: Response) {
   res.status(201).json(await svc.registerPayment(req.params.id, Number(amount), medium, notes, getActor(req)));
 }
 
+export async function payCredit(req: Request, res: Response) {
+  const { medium } = req.body;
+  res.json(await svc.payCredit(req.params.id, medium, getActor(req)));
+}
+
 export async function ordersToday(req: Request, res: Response) {
   const branchId = (req.query.branchId as string | undefined) || undefined;
   res.json(await svc.getOrdersToday(branchId));

@@ -186,10 +186,13 @@ export default function BancoPage() {
             const Icon = cfg.icon;
             const isMixed = m.cashPart != null;
             const isPositive = m.type === "ingreso" || m.type === "consignacion";
-            // ingreso/egreso solos = falta su contraparte → ROJO. Conversiones = verde (ya son swap).
-            const red = m.type === "ingreso" || m.type === "egreso";
+            // Rojo solo si no tiene contraparte NI domiciliario asignado. Con domiciliario = cerrado.
+            const hasDriver = !!m.driverName;
+            const red = (m.type === "ingreso" || m.type === "egreso") && !hasDriver;
             const cardClass = red
               ? "border-2 border-red-500 bg-red-500/10"
+              : hasDriver
+              ? "border border-green-500/30 bg-green-500/[0.05]"
               : "border border-green-500/20 bg-green-500/[0.03]";
             return (
               <div key={`${m.source}-${m.id}-${idx}`} className={`glass-strong rounded-2xl p-4 ${cardClass}`}>
@@ -201,6 +204,7 @@ export default function BancoPage() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className={`font-medium text-sm truncate ${red ? "text-red-600 dark:text-red-400" : ""}`}>{m.description}</p>
+                        {hasDriver && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-green-500/20 text-green-700 dark:text-green-400">✓ {m.driverName}</span>}
                         <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${cfg.badge}`}>{cfg.label}</span>
                         {isMixed ? (
                           <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-amber-500/20 text-amber-700 dark:text-amber-400">
@@ -216,7 +220,6 @@ export default function BancoPage() {
                         {fmtDate(m.date)}
                         {isMixed ? ` · 💵 ${formatCOP(m.cashPart ?? 0)} efectivo + 🏦 ${formatCOP(m.bankPart ?? 0)} transferencia` : ""}
                         {!isMixed && m.medium ? ` · ${m.type === "ingreso" || m.type === "consignacion" ? "Entró" : "Salió"} por ${m.medium === "cash" ? "efectivo" : "transferencia"}` : ""}
-                        {m.driverName ? ` · ${m.driverName}` : ""}
                         {m.createdByName ? ` · 👤 ${m.createdByName}` : ""}
                         {m.reference ? ` · Ref: ${m.reference}` : ""}{m.branchName ? ` · ${m.branchName}` : ""}
                       </p>
@@ -232,31 +235,28 @@ export default function BancoPage() {
                   </div>
                 </div>
 
-                <div className="mt-3 flex gap-2">
-                  {red && (
-                    <button
-                      onClick={() => registrarContraria(m)}
-                      className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500 text-white text-sm font-bold hover:bg-red-600 transition"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      Registrar {m.type === "ingreso" ? "Salida" : "Ingreso"} de {formatCOP(m.amount)} para cuadrar
-                    </button>
-                  )}
-                  {m.source === "bank" && !m.driverName && (
-                    <button
-                      onClick={() => setApplyModal({ mov: m })}
-                      className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-amber-500/20 text-amber-700 dark:text-amber-400 text-sm font-bold hover:bg-amber-500/30 transition border border-amber-500/30"
-                    >
-                      <CreditCard className="h-3.5 w-3.5" />
-                      Descontar de deuda
-                    </button>
-                  )}
-                  {m.driverName && (
-                    <span className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-green-500/10 text-green-700 dark:text-green-400 text-xs font-bold border border-green-500/20">
-                      ✓ Aplicado a {m.driverName}
-                    </span>
-                  )}
-                </div>
+                {(!hasDriver) && (
+                  <div className="mt-3 flex gap-2">
+                    {red && (
+                      <button
+                        onClick={() => registrarContraria(m)}
+                        className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500 text-white text-sm font-bold hover:bg-red-600 transition"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Registrar {m.type === "ingreso" ? "Salida" : "Ingreso"} de {formatCOP(m.amount)} para cuadrar
+                      </button>
+                    )}
+                    {m.source === "bank" && (
+                      <button
+                        onClick={() => setApplyModal({ mov: m })}
+                        className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-amber-500/20 text-amber-700 dark:text-amber-400 text-sm font-bold hover:bg-amber-500/30 transition border border-amber-500/30"
+                      >
+                        <CreditCard className="h-3.5 w-3.5" />
+                        Descontar de deuda
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}

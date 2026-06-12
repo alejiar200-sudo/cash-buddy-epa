@@ -145,7 +145,7 @@ export async function applyBankToDriver(
   const previousCredit = driver.creditAmount ?? 0;
 
   // Si el domiciliario ya tiene crédito (empresa le debe), sumar al crédito
-  if (previousDebt <= 0 && previousCredit >= 0) {
+  if (previousDebt <= 0 && previousCredit > 0) {
     const newCredit = previousCredit + amount;
     await prisma.$transaction([
       prisma.driver.update({
@@ -222,6 +222,40 @@ export async function applyBankToDriver(
   const newDebt = Math.max(0, previousDebt - amount);
   const creditAmount = excess > 0 ? excess : 0;
   return { applied, previousDebt, newDebt, creditAmount, creditMedium: creditAmount > 0 ? medium : null, excess };
+}
+
+export async function payCredit(
+  driverId: string,
+  medium: "cash" | "bank",
+  actor?: { id?: string | null; name?: string | null }
+) {
+  const driver = await prisma.driver.findUnique({ where: { id: driverId } });
+  if (!driver) throw notFound("Domiciliario no encontrado");
+  const creditAmount = driver.creditAmount ?? 0;
+  if (creditAmount <= 0) throw badRequest("Este domiciliario no tiene crédito pendiente");
+
+  await prisma.$transaction(async (tx) => {
+    // Egreso de la empresa hacia el domiciliario
+    await tx.bankTransaction.create({
+      data: {
+        type: "egreso",
+        medium,
+        amount: creditAmount,
+        description: `Pago a domiciliario ${driver.name}`,
+        driverId,
+        driverName: driver.name,
+        createdBy: actor?.id ?? null,
+        createdByName: actor?.name ?? null,
+      },
+    });
+    // Cerrar el crédito
+    await tx.driver.update({
+      where: { id: driverId },
+      data: { creditAmount: 0, creditMedium: null },
+    });
+  });
+
+  return { paid: creditAmount, medium, driverName: driver.name };
 }
 
 export async function getOrdersToday(branchId?: string) {

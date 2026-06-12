@@ -107,6 +107,12 @@ export const getDailyStats = (date: string, branchId?: string) =>
 export const getDebtsDashboard = (branchId?: string) =>
   apiFetch<DebtsDashboard>(`/sd/dashboard/debts${branchId ? `?branchId=${branchId}` : ""}`);
 
+export const payDriverCredit = (driverId: string, medium: "cash" | "bank") =>
+  apiFetch<{ paid: number; medium: string; driverName: string }>(
+    `/sd/drivers/${driverId}/pay-credit`,
+    { method: "POST", body: JSON.stringify({ medium }) }
+  );
+
 export const applyBankToDriver = (bankTxId: string, driverId: string) =>
   apiFetch<{ applied: number; previousDebt: number; newDebt: number; creditAmount: number; creditMedium: string | null; excess: number }>(
     `/bank-transactions/${bankTxId}/apply-to-driver`,

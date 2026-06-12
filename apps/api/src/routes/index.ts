@@ -110,6 +110,7 @@ apiRouter.get("/sd/orders/today", asyncHandler(driver.ordersToday));
 apiRouter.get("/sd/drivers/:id", asyncHandler(driver.detail));
 apiRouter.get("/sd/drivers/:id/statement", asyncHandler(driver.statement));
 apiRouter.post("/sd/drivers/:id/payment", asyncHandler(driver.registerPayment));
+apiRouter.post("/sd/drivers/:id/pay-credit", asyncHandler(driver.payCredit));
 
 // ─── Bases ────────────────────────────────────────────────────────────────────
 apiRouter.get("/sd/bases", asyncHandler(base.list));
