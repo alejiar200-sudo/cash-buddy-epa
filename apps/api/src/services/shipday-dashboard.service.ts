@@ -221,18 +221,27 @@ export async function getDailyStats(date: string, branchId?: string) {
 }
 
 export async function getDebtsDashboard(branchId?: string) {
-  const where = branchId ? { branchId, pendingDebt: { gt: 0 } } : { pendingDebt: { gt: 0 } };
-  // Límites para evitar cargar cientos de bases por driver
-  return prisma.driver.findMany({
-    where,
-    include: {
-      branch: { select: { id: true, name: true } },
-      orders: { orderBy: { deliveredAt: "desc" }, take: 5 },
-      bases: { where: { type: "entrega" }, orderBy: { date: "desc" }, take: 20 },
-    },
-    orderBy: { pendingDebt: "desc" },
-    take: 100,
-  });
+  const branchFilter = branchId ? { branchId } : {};
+  const include = {
+    branch: { select: { id: true, name: true } },
+    orders: { orderBy: { deliveredAt: "desc" } as const, take: 5 },
+    bases: { where: { type: "entrega" as const }, orderBy: { date: "desc" } as const, take: 20 },
+  };
+  const [debtors, creditors] = await Promise.all([
+    prisma.driver.findMany({
+      where: { ...branchFilter, pendingDebt: { gt: 0 } },
+      include,
+      orderBy: { pendingDebt: "desc" },
+      take: 100,
+    }),
+    prisma.driver.findMany({
+      where: { ...branchFilter, pendingDebt: 0, creditAmount: { gt: 0 } },
+      include,
+      orderBy: { creditAmount: "desc" },
+      take: 100,
+    }),
+  ]);
+  return { debtors, creditors };
 }
 
 const DELIVERED = { in: ["DELIVERED", "COMPLETED"] };

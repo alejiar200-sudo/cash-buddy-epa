@@ -127,6 +127,103 @@ export async function getDriverStatement(id: string) {
   };
 }
 
+export async function applyBankToDriver(
+  bankTxId: string,
+  driverId: string,
+  actor?: { id?: string | null; name?: string | null }
+) {
+  const [bankTx, driver] = await Promise.all([
+    prisma.bankTransaction.findUnique({ where: { id: bankTxId } }),
+    prisma.driver.findUnique({ where: { id: driverId } }),
+  ]);
+  if (!bankTx) throw notFound("Movimiento bancario no encontrado");
+  if (!driver) throw notFound("Domiciliario no encontrado");
+
+  const amount = bankTx.amount;
+  const medium = (bankTx.medium ?? "bank") as "cash" | "bank";
+  const previousDebt = driver.pendingDebt;
+  const previousCredit = driver.creditAmount ?? 0;
+
+  // Si el domiciliario ya tiene crédito (empresa le debe), sumar al crédito
+  if (previousDebt <= 0 && previousCredit >= 0) {
+    const newCredit = previousCredit + amount;
+    await prisma.$transaction([
+      prisma.driver.update({
+        where: { id: driverId },
+        data: { creditAmount: newCredit, creditMedium: medium },
+      }),
+      prisma.bankTransaction.update({
+        where: { id: bankTxId },
+        data: { driverId, driverName: driver.name },
+      }),
+    ]);
+    return { applied: amount, previousDebt: 0, newDebt: 0, creditAmount: newCredit, creditMedium: medium, excess: newCredit };
+  }
+
+  // Caso normal: descontar del pendingDebt
+  const applied = Math.min(amount, previousDebt);
+  const excess = amount - previousDebt; // positivo = empresa queda debiendo
+
+  await prisma.$transaction(async (tx) => {
+    // Registrar el pago para que quede en el historial del domiciliario
+    const [givenAgg, paidAgg] = await Promise.all([
+      tx.baseTransaction.aggregate({ where: { driverId, type: "entrega" }, _sum: { amount: true } }),
+      tx.baseTransaction.aggregate({ where: { driverId, type: "pago" }, _sum: { amount: true } }),
+    ]);
+    const basePending = Math.max(0, (givenAgg._sum.amount ?? 0) - (paidAgg._sum.amount ?? 0));
+    const baseAlloc = Math.min(applied, basePending);
+    const commissionAlloc = applied - baseAlloc;
+
+    if (baseAlloc > 0) {
+      await tx.baseTransaction.create({
+        data: {
+          driverId,
+          branchId: driver.branchId,
+          amount: baseAlloc,
+          type: "pago",
+          notes: `Pago vía banco (${medium === "cash" ? "efectivo" : "transferencia"})`,
+          createdBy: actor?.id ?? null,
+          createdByName: actor?.name ?? null,
+        },
+      });
+    }
+    if (commissionAlloc > 0) {
+      await tx.driverPayment.create({
+        data: {
+          driverId,
+          branchId: driver.branchId,
+          amount: commissionAlloc,
+          medium,
+          notes: "Pago vía movimiento bancario",
+          createdBy: actor?.id ?? null,
+          createdByName: actor?.name ?? null,
+        },
+      });
+    }
+
+    const newDebt = Math.max(0, previousDebt - amount);
+    const newCredit = excess > 0 ? excess : 0;
+
+    await tx.driver.update({
+      where: { id: driverId },
+      data: {
+        pendingDebt: newDebt,
+        creditAmount: newCredit,
+        creditMedium: newCredit > 0 ? medium : null,
+      },
+    });
+
+    await tx.bankTransaction.update({
+      where: { id: bankTxId },
+      data: { driverId, driverName: driver.name },
+    });
+  });
+
+  const newDebt = Math.max(0, previousDebt - amount);
+  const creditAmount = excess > 0 ? excess : 0;
+  return { applied, previousDebt, newDebt, creditAmount, creditMedium: creditAmount > 0 ? medium : null, excess };
+}
+
 export async function getOrdersToday(branchId?: string) {
   // Ventana del día calculada en la zona horaria local del servidor para evitar
   // que pedidos de la noche queden fuera por el offset UTC.

@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import * as svc from "../services/bank-transaction.service";
+import * as driverSvc from "../services/driver.service";
 import { getActor } from "../lib/actor";
 
 export async function list(req: Request, res: Response) {
@@ -20,4 +21,9 @@ export async function remove(req: Request, res: Response) {
 export async function summary(req: Request, res: Response) {
   const { from, to } = req.query as Record<string, string>;
   res.json(await svc.summary(from, to));
+}
+
+export async function applyToDriver(req: Request, res: Response) {
+  const { driverId } = req.body;
+  res.json(await driverSvc.applyBankToDriver(req.params.id, driverId, getActor(req)));
 }

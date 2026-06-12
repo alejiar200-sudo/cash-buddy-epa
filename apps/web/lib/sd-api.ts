@@ -105,7 +105,13 @@ export const getDashboard = (branchId?: string) =>
 export const getDailyStats = (date: string, branchId?: string) =>
   apiFetch<DailyStat[]>(`/sd/dashboard/daily/${date}${branchId ? `?branchId=${branchId}` : ""}`);
 export const getDebtsDashboard = (branchId?: string) =>
-  apiFetch<DriverDebt[]>(`/sd/dashboard/debts${branchId ? `?branchId=${branchId}` : ""}`);
+  apiFetch<DebtsDashboard>(`/sd/dashboard/debts${branchId ? `?branchId=${branchId}` : ""}`);
+
+export const applyBankToDriver = (bankTxId: string, driverId: string) =>
+  apiFetch<{ applied: number; previousDebt: number; newDebt: number; creditAmount: number; creditMedium: string | null; excess: number }>(
+    `/bank-transactions/${bankTxId}/apply-to-driver`,
+    { method: "POST", body: JSON.stringify({ driverId }) }
+  );
 export const getOrdersByBranch = (branchId: string, from?: string, to?: string) => {
   const q = new URLSearchParams(Object.entries({ from, to }).filter(([, v]) => v) as [string, string][]);
   return apiFetch<Order[]>(`/sd/dashboard/orders/${branchId}${q.toString() ? "?" + q : ""}`);
@@ -399,6 +405,8 @@ export interface Driver {
   phone?: string;
   active: boolean;
   pendingDebt: number;
+  creditAmount: number;
+  creditMedium?: string | null;
   branch: { id: string; name: string };
   createdAt: string;
 }
@@ -517,7 +525,14 @@ export interface DriverDebt {
   id: string;
   name: string;
   pendingDebt: number;
+  creditAmount: number;
+  creditMedium?: string | null;
   branch: { id: string; name: string };
+}
+
+export interface DebtsDashboard {
+  debtors: DriverDebt[];
+  creditors: DriverDebt[];
 }
 
 export interface MonthlyClose {

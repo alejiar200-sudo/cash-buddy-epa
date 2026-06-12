@@ -1,14 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, Trash2, TrendingUp, TrendingDown, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Plus, Trash2, TrendingUp, TrendingDown, CheckCircle2, CreditCard } from "lucide-react";
 import { toast } from "sonner";
 import * as api from "@/lib/sd-api";
-import type { UnifiedBankMovement } from "@/lib/sd-api";
+import type { UnifiedBankMovement, Driver } from "@/lib/sd-api";
 import { UnifiedBankWizard } from "@/components/wizards/UnifiedBankWizard";
 import { useLive } from "@/lib/use-live";
+import { formatCOP as _fmt } from "@/lib/format";
 
-function formatCOP(n: number) { return "$" + n.toLocaleString("es-CO"); }
+function formatCOP(n: number) { return _fmt ? _fmt(n) : "$" + n.toLocaleString("es-CO"); }
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" });
 }
@@ -70,6 +71,7 @@ export default function BancoPage() {
   const [toDate, setToDate] = useState("");
   const [wizardOpen, setWizardOpen] = useState(false);
   const [prefill, setPrefill] = useState<{ type: "ingreso" | "egreso"; amount: number; pairWith?: string } | undefined>();
+  const [applyModal, setApplyModal] = useState<{ mov: UnifiedBankMovement } | null>(null);
 
   // `silent` = refresco en vivo: sin spinner y sin re-render si nada cambió (evita parpadeo).
   const load = async (silent = false) => {
@@ -230,15 +232,31 @@ export default function BancoPage() {
                   </div>
                 </div>
 
-                {red && (
-                  <button
-                    onClick={() => registrarContraria(m)}
-                    className="mt-3 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500 text-white text-sm font-bold hover:bg-red-600 transition"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    Registrar {m.type === "ingreso" ? "Salida" : "Ingreso"} de {formatCOP(m.amount)} para cuadrar
-                  </button>
-                )}
+                <div className="mt-3 flex gap-2">
+                  {red && (
+                    <button
+                      onClick={() => registrarContraria(m)}
+                      className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500 text-white text-sm font-bold hover:bg-red-600 transition"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Registrar {m.type === "ingreso" ? "Salida" : "Ingreso"} de {formatCOP(m.amount)} para cuadrar
+                    </button>
+                  )}
+                  {m.source === "bank" && !m.driverName && (
+                    <button
+                      onClick={() => setApplyModal({ mov: m })}
+                      className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-amber-500/20 text-amber-700 dark:text-amber-400 text-sm font-bold hover:bg-amber-500/30 transition border border-amber-500/30"
+                    >
+                      <CreditCard className="h-3.5 w-3.5" />
+                      Descontar de deuda
+                    </button>
+                  )}
+                  {m.driverName && (
+                    <span className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-green-500/10 text-green-700 dark:text-green-400 text-xs font-bold border border-green-500/20">
+                      ✓ Aplicado a {m.driverName}
+                    </span>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -251,6 +269,14 @@ export default function BancoPage() {
         prefill={prefill}
         onDone={load}
       />
+
+      {applyModal && (
+        <ApplyToDriverModal
+          mov={applyModal.mov}
+          onClose={() => setApplyModal(null)}
+          onDone={() => { setApplyModal(null); load(); }}
+        />
+      )}
     </div>
   );
 }
@@ -287,6 +313,130 @@ function SummaryCard({ label, value, color }: { label: string; value: string; co
     <div className="glass-strong rounded-2xl p-4">
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className={`font-black text-xl tnum mt-1 ${color}`}>{value}</div>
+    </div>
+  );
+}
+
+function ApplyToDriverModal({ mov, onClose, onDone }: { mov: UnifiedBankMovement; onClose: () => void; onDone: () => void }) {
+  const [drivers, setDrivers] = useState<Driver[]>([]);
+  const [driverId, setDriverId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<{ applied: number; previousDebt: number; newDebt: number; creditAmount: number; creditMedium: string | null; excess: number } | null>(null);
+
+  useEffect(() => {
+    api.getDrivers().then(setDrivers).catch(() => {});
+  }, []);
+
+  const selected = drivers.find(d => d.id === driverId);
+
+  async function apply() {
+    if (!driverId) return;
+    setLoading(true);
+    try {
+      const res = await api.applyBankToDriver(mov.id, driverId);
+      setResult(res);
+    } catch (e) { toast.error(String(e)); }
+    setLoading(false);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="glass-strong rounded-3xl p-6 w-full max-w-md space-y-4 shadow-2xl">
+        <div className="flex items-center justify-between">
+          <h2 className="font-black text-lg">Descontar de deuda</h2>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-secondary transition text-muted-foreground">✕</button>
+        </div>
+
+        <div className="bg-amber-500/10 rounded-xl p-3 border border-amber-500/20">
+          <p className="text-sm font-bold text-amber-700 dark:text-amber-400">{mov.description}</p>
+          <p className="text-2xl font-black tnum mt-1">{formatCOP(mov.amount)}</p>
+          <p className="text-xs text-muted-foreground">{mov.medium === "cash" ? "💵 Efectivo" : "🏦 Transferencia"}</p>
+        </div>
+
+        {!result ? (
+          <>
+            <div className="space-y-2">
+              <label className="text-sm font-bold">Domiciliario</label>
+              <select
+                value={driverId}
+                onChange={e => setDriverId(e.target.value)}
+                className="w-full px-3 py-2.5 rounded-xl border border-border bg-background text-sm"
+              >
+                <option value="">— Seleccionar —</option>
+                {drivers.map(d => (
+                  <option key={d.id} value={d.id}>
+                    {d.name} · {d.branch.name} · Deuda: {formatCOP(d.pendingDebt)}
+                  </option>
+                ))}
+              </select>
+              {selected && (
+                <div className="flex gap-2 text-sm">
+                  <span className="px-2 py-1 rounded-lg bg-red-500/10 text-red-600 font-bold">
+                    Debe: {formatCOP(selected.pendingDebt)}
+                  </span>
+                  {selected.creditAmount > 0 && (
+                    <span className="px-2 py-1 rounded-lg bg-amber-500/10 text-amber-600 font-bold">
+                      Crédito: {formatCOP(selected.creditAmount)}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-border text-sm font-bold hover:bg-secondary transition">Cancelar</button>
+              <button
+                onClick={apply}
+                disabled={!driverId || loading}
+                className="flex-1 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:opacity-90 transition disabled:opacity-50"
+              >
+                {loading ? "Aplicando…" : "Confirmar"}
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-sm font-bold text-center">Resultado del descuento</p>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <div className="bg-secondary/50 rounded-xl p-3">
+                <p className="text-xs text-muted-foreground">Deuda anterior</p>
+                <p className="font-black tnum text-red-500">{formatCOP(result.previousDebt)}</p>
+              </div>
+              <div className="bg-secondary/50 rounded-xl p-3">
+                <p className="text-xs text-muted-foreground">Monto aplicado</p>
+                <p className="font-black tnum text-green-600">{formatCOP(result.applied)}</p>
+              </div>
+            </div>
+
+            {result.newDebt > 0 && (
+              <div className="rounded-xl p-4 bg-red-500/10 border border-red-500/30 text-center">
+                <p className="text-xs text-muted-foreground">El domiciliario aún debe</p>
+                <p className="font-black text-2xl tnum text-red-600">{formatCOP(result.newDebt)}</p>
+              </div>
+            )}
+
+            {result.creditAmount > 0 && (
+              <div className="rounded-xl p-4 bg-amber-500/10 border border-amber-500/30 text-center">
+                <p className="text-xs text-muted-foreground">La empresa le debe al domiciliario</p>
+                <p className="font-black text-2xl tnum text-amber-600">{formatCOP(result.creditAmount)}</p>
+                <p className="text-xs mt-1 font-bold text-amber-700 dark:text-amber-400">
+                  Pagar en {result.creditMedium === "cash" ? "💵 efectivo" : "🏦 transferencia"}
+                </p>
+              </div>
+            )}
+
+            {result.newDebt === 0 && result.creditAmount === 0 && (
+              <div className="rounded-xl p-4 bg-green-500/10 border border-green-500/30 text-center">
+                <p className="font-black text-green-600">✓ Deuda saldada exactamente</p>
+              </div>
+            )}
+
+            <button onClick={onDone} className="w-full py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:opacity-90 transition">
+              Listo
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
