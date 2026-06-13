@@ -93,7 +93,8 @@ export default function BancoPage() {
   const ingresos = movements.filter(m => m.type === "ingreso" || m.type === "consignacion").reduce((s, m) => s + m.amount, 0);
   const egresos  = movements.filter(m => m.type === "egreso" || m.type === "retiro").reduce((s, m) => s + m.amount, 0);
   const balance  = ingresos - egresos;
-  const sinContraparte = rows.filter(r => r.kind === "single" && (r.mov.type === "ingreso" || r.mov.type === "egreso")).length;
+  // Movimiento asignado a domiciliario = ya tiene contraparte implícita, no cuenta como pendiente
+  const sinContraparte = rows.filter(r => r.kind === "single" && (r.mov.type === "ingreso" || r.mov.type === "egreso") && !r.mov.driverName).length;
 
   // Registrar la contraparte: prefija tipo y monto, ENLAZA por pairWith. No copia descripción.
   function registrarContraria(m: UnifiedBankMovement) {

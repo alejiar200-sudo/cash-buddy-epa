@@ -40,8 +40,9 @@ export async function getMonthlyReport(month: string, branchId?: string) {
     prisma.movement.aggregate({ where: { category: { in: [16, 18] }, status: "confirmed", date: { startsWith: monthPrefix } }, _sum: { amount: true } }),
     prisma.baseTransaction.aggregate({ where: { ...baseWhere, type: "entrega" }, _sum: { amount: true } }),
     prisma.baseTransaction.aggregate({ where: { ...baseWhere, type: "pago" }, _sum: { amount: true } }),
-    prisma.bankTransaction.aggregate({ where: { type: "ingreso", date: range }, _sum: { amount: true } }),
-    prisma.bankTransaction.aggregate({ where: { type: "egreso", date: range }, _sum: { amount: true } }),
+    // Excluir movimientos asignados a domiciliario: ya están balanceados contra la deuda/crédito del driver
+    prisma.bankTransaction.aggregate({ where: { type: "ingreso", date: range, driverId: null }, _sum: { amount: true } }),
+    prisma.bankTransaction.aggregate({ where: { type: "egreso", date: range, driverId: null }, _sum: { amount: true } }),
     prisma.clientDebt.aggregate({ where: { createdAt: range }, _sum: { amount: true } }),
     prisma.clientDebt.aggregate({ where: { paidAt: range }, _sum: { paidAmount: true } }),
     // Saldo de BASE por domiciliario (entrega − pago), NO la deuda total (que incluye comisiones de domicilios)
