@@ -2,6 +2,7 @@ import { prisma } from "../lib/prisma";
 import { encryptApiKey, decryptApiKey, DecryptError } from "../lib/crypto";
 import * as shipday from "./shipday.service";
 import { notFound, conflict } from "../lib/errors";
+import { toBogotaDateStr } from "../lib/date-range";
 
 // ─── Cache de settings (evita 1 query por cada orden sincronizada) ────────────
 let _settingsCache: { shipdayCommission: number } | null = null;
@@ -222,7 +223,7 @@ export async function syncBranch(id: string): Promise<{ drivers: number; orders:
           where: { id: dbOrder.driverId },
           data: { pendingDebt: { increment: dbOrder.companyAmount } },
         });
-        const dateStr = now.toISOString().slice(0, 10);
+        const dateStr = toBogotaDateStr(now);
         await prisma.dailyDriverStat.upsert({
           where: { date_driverId: { date: dateStr, driverId: dbOrder.driverId } },
           create: { date: dateStr, branchId: id, driverId: dbOrder.driverId, orderCount: 1, totalValue: dbOrder.deliveryValue, companyTotal: dbOrder.companyAmount },
@@ -273,7 +274,7 @@ async function persistDeliveredOrder(branchId: string, shipdayOrderId: string, p
     driverId = d?.id ?? null;
   }
 
-  const dateStr = p.deliveredAt.toISOString().slice(0, 10);
+  const dateStr = toBogotaDateStr(p.deliveredAt);
 
   // Todas las escrituras en una sola transacción — previene datos inconsistentes en crash
   await prisma.$transaction(async (tx) => {
@@ -312,6 +313,41 @@ async function persistDeliveredOrder(branchId: string, shipdayOrderId: string, p
 async function getCommissionPercent(): Promise<number> {
   const settings = await prisma.settings.findUnique({ where: { id: "singleton" } });
   return settings?.shipdayCommission ?? 30;
+}
+
+/**
+ * Reconciliación administrativa: recorre el historial paginado completo de Shipday
+ * (no solo el feed de "activos") para un rango de fechas y persiste cualquier pedido
+ * DELIVERED/COMPLETED que falte en la BD. Corrige backlog perdido por la limitación
+ * de paginación de getAllOrders (ver shipday.service.ts) — por ejemplo, pedidos del
+ * día anterior que nunca se sincronizaron porque la cuenta ya tenía muchos pedidos
+ * históricos.
+ */
+export async function reconcileBranch(id: string, from: string, to: string): Promise<{ checked: number; created: number }> {
+  const branch = await prisma.branch.findUnique({ where: { id } });
+  if (!branch) throw notFound("Sucursal no encontrada");
+
+  const apiKey = decryptApiKey(branch.apiKeyEnc);
+  const commissionPercent = await getCachedCommission();
+  const delivered = await shipday.getDeliveredOrdersInRange(apiKey, from, to);
+
+  let created = 0;
+  for (const so of delivered) {
+    const orderId = String(so.orderId);
+    const ok = await persistDeliveredOrder(id, orderId, {
+      deliveryValue: shipday.getOrderDeliveryValue(so),
+      driverShipdayId: shipday.getOrderCarrierId(so),
+      orderNumber: so.orderNumber ?? null,
+      customerName: so.customer?.name ?? null,
+      customerAddress: so.customer?.address ?? null,
+      deliveredAt: shipday.getOrderDeliveredAt(so),
+      commissionPercent,
+      raw: so as object,
+    });
+    if (ok) created++;
+  }
+
+  return { checked: delivered.length, created };
 }
 
 export async function syncAllBranches() {

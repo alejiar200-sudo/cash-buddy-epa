@@ -1,14 +1,12 @@
 import { prisma } from "../lib/prisma";
 import { notFound, badRequest } from "../lib/errors";
+import { bogotaOpenRange } from "../lib/date-range";
 
 export async function listConversions(branchId?: string, from?: string, to?: string) {
   const where: Record<string, unknown> = {};
   if (branchId) where.branchId = branchId;
-  if (from || to) {
-    where.date = {};
-    if (from) (where.date as Record<string, unknown>).gte = new Date(from);
-    if (to) (where.date as Record<string, unknown>).lte = new Date(to + "T23:59:59");
-  }
+  const dateRange = bogotaOpenRange(from, to);
+  if (dateRange) where.date = dateRange;
   return prisma.conversion.findMany({
     where,
     include: { branch: { select: { id: true, name: true } } },

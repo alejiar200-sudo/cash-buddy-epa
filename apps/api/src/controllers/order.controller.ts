@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { prisma } from "../lib/prisma";
 import { badRequest, notFound } from "../lib/errors";
+import { toBogotaDateStr } from "../lib/date-range";
 
 export async function manualCreate(req: Request, res: Response) {
   const { branchId, driverId, deliveryValue, orderNumber, customerName, clientId, addToClientDebt, notes } = req.body;
@@ -42,7 +43,7 @@ export async function manualCreate(req: Request, res: Response) {
         where: { id: driverId },
         data: { pendingDebt: { increment: companyAmount } },
       });
-      const dateStr = new Date().toISOString().slice(0, 10);
+      const dateStr = toBogotaDateStr(new Date());
       await tx.dailyDriverStat.upsert({
         where: { date_driverId: { date: dateStr, driverId } },
         create: { date: dateStr, branchId, driverId, orderCount: 1, totalValue: Math.round(deliveryValue), companyTotal: companyAmount },

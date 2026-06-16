@@ -5,7 +5,7 @@ import { ensureDay } from "./day.service";
 import { toMovement } from "./mappers";
 
 function nowTime(): string {
-  return new Date().toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
+  return new Date().toLocaleTimeString("es-CO", { timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit" });
 }
 
 export async function addMovement(input: CreateMovementRequest): Promise<Movement> {

@@ -80,8 +80,54 @@ export async function getDrivers(apiKey: string): Promise<ShipdayDriver[]> {
 export async function getAllOrders(apiKey: string, pageSize = 200): Promise<ShipdayOrder[]> {
   // La API de Shipday REQUIERE parámetros de paginación para retornar pedidos del dashboard.
   // Sin parámetros siempre devuelve [].
-  const data = await shipdayFetch<ShipdayOrder[]>(apiKey, `/orders?pageSize=${pageSize}`);
-  return Array.isArray(data) ? data : [];
+  //
+  // IMPORTANTE: antes esto solo pedía la página 0 (200 pedidos) y nunca avanzaba. Si la
+  // cuenta acumula más de 200 pedidos históricos, los pedidos nuevos pueden quedar fuera
+  // de esa primera página (según el orden que devuelva Shipday) y nunca se sincronizan:
+  // ni aparecen en /pedidos ni afectan la deuda del domiciliario. Por eso ahora se pagina
+  // hasta agotar el feed, con un tope de seguridad para no quedar en loop si la API
+  // tuviera un comportamiento inesperado.
+  const MAX_PAGES = 50; // tope de seguridad: hasta 10,000 pedidos
+  const all: ShipdayOrder[] = [];
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const data = await shipdayFetch<ShipdayOrder[]>(apiKey, `/orders?pageSize=${pageSize}&page=${page}`);
+    const batch = Array.isArray(data) ? data : [];
+    if (batch.length === 0) break;
+    all.push(...batch);
+    if (batch.length < pageSize) break; // última página parcial
+  }
+  return all;
+}
+
+/**
+ * Recorre el historial completo paginado de Shipday y devuelve solo los pedidos
+ * entregados/completados cuya fecha de entrega cae en [from, to] (YYYY-MM-DD).
+ * Usado por la reconciliación administrativa para recuperar pedidos que el feed de
+ * "activos" nunca mostró (ver getAllOrders).
+ */
+export async function getDeliveredOrdersInRange(
+  apiKey: string,
+  from: string,
+  to: string,
+  pageSize = 200,
+): Promise<ShipdayOrder[]> {
+  const fromTime = new Date(from + "T00:00:00.000-05:00").getTime();
+  const toTime = new Date(to + "T23:59:59.999-05:00").getTime();
+  const MAX_PAGES = 200; // tope de seguridad para reconciliación histórica
+  const matched: ShipdayOrder[] = [];
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const data = await shipdayFetch<ShipdayOrder[]>(apiKey, `/orders?pageSize=${pageSize}&page=${page}`);
+    const batch = Array.isArray(data) ? data : [];
+    if (batch.length === 0) break;
+    for (const o of batch) {
+      const state = o.orderStatus?.orderState ?? "";
+      if (!DELIVERED_STATES.has(state)) continue;
+      const deliveredAt = o.activityLog?.deliveryTime ? new Date(o.activityLog.deliveryTime).getTime() : null;
+      if (deliveredAt != null && deliveredAt >= fromTime && deliveredAt <= toTime) matched.push(o);
+    }
+    if (batch.length < pageSize) break;
+  }
+  return matched;
 }
 
 export async function getDeliveredOrders(apiKey: string): Promise<ShipdayOrder[]> {

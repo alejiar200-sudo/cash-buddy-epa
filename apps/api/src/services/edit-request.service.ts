@@ -1,5 +1,6 @@
 import { prisma } from "../lib/prisma";
 import { notFound, badRequest } from "../lib/errors";
+import { toBogotaDateStr } from "../lib/date-range";
 
 type ChangeMap = Record<string, { old: string; new: string }>;
 
@@ -96,7 +97,7 @@ async function deleteEntity(entityType: string, entityId: string) {
         }
         // Revertir stats diarias
         if (order.driverId && order.deliveredAt) {
-          const dateStr = order.deliveredAt.toISOString().slice(0, 10);
+          const dateStr = toBogotaDateStr(order.deliveredAt);
           const stat = await tx.dailyDriverStat.findUnique({
             where: { date_driverId: { date: dateStr, driverId: order.driverId } },
           });
@@ -222,6 +223,11 @@ async function applyChanges(entityType: string, entityId: string, changes: Chang
         data.editedAt = new Date();
         await prisma.shiftClose.update({ where: { id: entityId }, data });
       }
+      break;
+    }
+    case "MonthlyClose": {
+      // #9 — Edición de cierre mensual autorizada por el admin (campos del snapshot).
+      await prisma.monthlyClose.update({ where: { id: entityId }, data: newValues });
       break;
     }
     case "ShipdayOrder":

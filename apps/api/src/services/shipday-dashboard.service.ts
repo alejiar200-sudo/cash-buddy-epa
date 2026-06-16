@@ -1,27 +1,10 @@
 import { prisma } from "../lib/prisma";
 import * as bankSvc from "./bank-transaction.service";
 import * as shiftSvc from "./shift-close.service";
-
-// IMPORTANTE: usar Z (UTC) para que el rango sea consistente con la página de pedidos
-// que parsea "2026-06-05" como UTC midnight. Sin Z en Bogotá (UTC-5), se adelantaría 5h.
-function dateRange(date: string) {
-  return {
-    gte: new Date(date + "T00:00:00.000Z"),
-    lte: new Date(date + "T23:59:59.999Z"),
-  };
-}
-
-function monthRange(month: string) {
-  const [y, m] = month.split("-").map(Number);
-  // UTC dates: start = primer día del mes 00:00Z, end = último día 23:59:59Z
-  const start = new Date(`${y}-${String(m).padStart(2, "0")}-01T00:00:00.000Z`);
-  const lastDay = new Date(y, m, 0).getDate();
-  const end = new Date(`${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}T23:59:59.999Z`);
-  return { gte: start, lte: end };
-}
+import { bogotaDayRange as dateRange, bogotaMonthRange as monthRange, todayBogota } from "../lib/date-range";
 
 export async function getDashboardFull(branchId?: string) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayBogota();
   const todayRange = dateRange(today);
 
   const [shipday, todayShifts, bankSummary, topClientDebtors, expectedBalances] = await Promise.all([
@@ -59,8 +42,7 @@ export async function getDashboardFull(branchId?: string) {
  * usado por los cierres de turno automáticos (#6). El usuario solo verifica.
  */
 export async function getExpectedBalancesForDate(date: string) {
-  const gte = new Date(date + "T00:00:00.000Z");
-  const lte = new Date(date + "T23:59:59.999Z");
+  const { gte, lte } = dateRange(date);
   return getExpectedBalances(date, { gte, lte });
 }
 
@@ -88,7 +70,7 @@ async function getExpectedBalances(today: string, todayRange: { gte: Date; lte: 
   } else {
     baseCash = settings?.initialCash ?? 0;
     baseBank = settings?.initialBank ?? 0;
-    periodStart = new Date(today.slice(0, 7) + "-01T00:00:00.000Z");
+    periodStart = monthRange(today.slice(0, 7)).gte;
   }
   const cumRange = { gte: periodStart, lte: todayRange.lte };
 
@@ -141,7 +123,7 @@ async function getExpectedBalances(today: string, todayRange: { gte: Date; lte: 
 }
 
 export async function getDashboard(branchId?: string) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayBogota();
   const month = today.slice(0, 7);
 
   const branchWhere = branchId ? { branchId } : {};
@@ -231,13 +213,13 @@ export async function getDebtsDashboard(branchId?: string) {
     prisma.driver.findMany({
       where: { ...branchFilter, pendingDebt: { gt: 0 } },
       include,
-      orderBy: { pendingDebt: "desc" },
+      orderBy: [{ pendingDebt: "desc" }, { name: "asc" }],
       take: 100,
     }),
     prisma.driver.findMany({
       where: { ...branchFilter, pendingDebt: 0, creditAmount: { gt: 0 } },
       include,
-      orderBy: { creditAmount: "desc" },
+      orderBy: [{ creditAmount: "desc" }, { name: "asc" }],
       take: 100,
     }),
   ]);
@@ -250,8 +232,8 @@ export async function getOrdersByBranch(branchId: string, from?: string, to?: st
   const where: Record<string, unknown> = { branchId, status: DELIVERED };
   if (from || to) {
     where.deliveredAt = {};
-    if (from) (where.deliveredAt as Record<string, Date>).gte = new Date(from);
-    if (to) (where.deliveredAt as Record<string, Date>).lte = new Date(to + "T23:59:59");
+    if (from) (where.deliveredAt as Record<string, Date>).gte = dateRange(from).gte;
+    if (to) (where.deliveredAt as Record<string, Date>).lte = dateRange(to).lte;
   }
   return prisma.shipdayOrder.findMany({
     where,

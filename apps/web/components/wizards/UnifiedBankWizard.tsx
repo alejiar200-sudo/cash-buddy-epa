@@ -33,6 +33,7 @@ export function UnifiedBankWizard({ open, onOpenChange, onDone, prefill }: Props
   const [drivers, setDrivers] = useState<api.Driver[]>([]);
   const [saving, setSaving] = useState(false);
   const [pairWith, setPairWith] = useState<string | undefined>();
+  const [noCounterpart, setNoCounterpart] = useState(false);
 
   useEffect(() => {
     if (open && drivers.length === 0) api.getDrivers().then(setDrivers).catch(() => {});
@@ -52,6 +53,7 @@ export function UnifiedBankWizard({ open, onOpenChange, onDone, prefill }: Props
   function reset() {
     setStep(1); setType(null); setMedium(null); setAmount(0); setCashPart(0); setBankPart(0);
     setDescription(""); setDriverId(""); setDriverSearch(""); setTxDate(new Date().toISOString().slice(0, 10)); setPairWith(undefined);
+    setNoCounterpart(false);
   }
   function close() { onOpenChange(false); setTimeout(reset, 250); }
 
@@ -71,6 +73,7 @@ export function UnifiedBankWizard({ open, onOpenChange, onDone, prefill }: Props
         driverId: driverId || undefined,
         date: new Date(txDate + "T12:00:00").toISOString(),
         ...(pairWith ? { pairWith } : {}),
+        ...(!pairWith && !driverId ? { noCounterpart } : {}),
       });
       const medioLabel = isMixed ? `mixto (${formatCOP(cashPart)} efectivo + ${formatCOP(bankPart)} transferencia)` : (medium === "cash" ? "efectivo" : "transferencia");
       toast.success(`✅ ${type === "ingreso" ? "Ingreso" : "Salida"} ${medioLabel} — ${formatCOP(effectiveAmount)}`);
@@ -197,6 +200,23 @@ export function UnifiedBankWizard({ open, onOpenChange, onDone, prefill }: Props
               onChange={e => setTxDate(e.target.value)}
               className="w-full mt-1 glass rounded-2xl px-5 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/30" />
           </div>
+          {!pairWith && !driverId && (
+            <div>
+              <label className="text-xs text-muted-foreground font-medium">¿Tiene contraparte?</label>
+              <div className="grid grid-cols-2 gap-2 mt-1">
+                <button type="button" onClick={() => setNoCounterpart(false)}
+                  className={`p-3 rounded-2xl border-2 text-sm font-semibold transition ${!noCounterpart ? "border-primary bg-primary/10" : "border-border bg-secondary/40"}`}>
+                  Con contraparte
+                  <div className="text-[11px] font-normal text-muted-foreground mt-0.5">Falta su ingreso/salida espejo para cuadrar</div>
+                </button>
+                <button type="button" onClick={() => setNoCounterpart(true)}
+                  className={`p-3 rounded-2xl border-2 text-sm font-semibold transition ${noCounterpart ? "border-amber-500 bg-amber-500/10" : "border-border bg-secondary/40"}`}>
+                  Sin contraparte
+                  <div className="text-[11px] font-normal text-muted-foreground mt-0.5">Es un movimiento independiente, no requiere cuadre</div>
+                </button>
+              </div>
+            </div>
+          )}
           <button onClick={() => setStep(5)}
             className="w-full bg-primary text-primary-foreground font-bold py-4 rounded-2xl shadow-cash">
             Ver resumen →

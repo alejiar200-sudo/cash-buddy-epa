@@ -99,12 +99,12 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
         expectedAmount,
         notes: notes || undefined,
       });
-      const label = shift === "AM" ? "Turno mañana" : "Turno tarde";
+      const label = shift === "AM" ? "Recibo AM" : "Recibo PM";
       if (isPM) {
         if (difference !== 0) {
           toast.warning(`⚠️ La caja NO está completa: faltante/sobrante de ${formatCOP(Math.abs(difference))}. Hay que rectificar caja.`);
         } else {
-          toast.success(`✅ Verificado: ${morningPerson} dejó la caja completa. Turno tarde cerrado.`);
+          toast.success(`✅ Verificado: ${morningPerson} dejó la caja completa. Recibo PM cerrado.`);
         }
       } else if (difference !== 0) {
         toast.warning(`⚠️ ${label} registrado con descuadre de ${formatCOP(Math.abs(difference))}`);
@@ -120,7 +120,7 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
     }
   }
 
-  const shiftLabel = shift === "AM" ? "Turno mañana" : shift === "PM" ? "Turno tarde" : "";
+  const shiftLabel = shift === "AM" ? "Recibo AM" : shift === "PM" ? "Recibo PM" : "";
 
   const titles = [
     "¿Qué turno vas a registrar?",
@@ -144,8 +144,8 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
       {step === 1 && (
         <div className="space-y-3">
           {([
-            ["AM", "☀️", "Turno mañana", "La persona de la mañana cierra y deja la caja"],
-            ["PM", "🌙", "Turno tarde", "La tarde verifica lo que dejó la mañana y cierra"],
+            ["AM", "☀️", "Recibo AM", "La persona de la mañana cierra y deja la caja"],
+            ["PM", "🌙", "Recibo PM", "La tarde verifica lo que dejó la mañana y cierra"],
           ] as const).map(([s, icon, title, desc]) => (
             <button
               key={s}

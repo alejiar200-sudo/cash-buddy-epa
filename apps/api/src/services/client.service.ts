@@ -90,18 +90,31 @@ export async function payDebt(debtId: string, paidAmount?: number) {
   if (!debt) throw notFound("Deuda no encontrada");
   if (debt.paid) throw new Error("Esta deuda ya fue pagada");
 
-  const actual = paidAmount ?? debt.amount;
+  // El monto realmente pagado puede ser parcial. Antes esto siempre decrementaba
+  // el saldo del cliente por debt.amount (el total) y marcaba paid:true aunque el
+  // pago fuera parcial — eso "perdonaba" la diferencia y dejaba el saldo mal.
+  const remaining = debt.amount - (debt.paidAmount ?? 0);
+  const actual = Math.min(paidAmount ?? remaining, remaining);
+  if (actual <= 0) throw new Error("El monto pagado debe ser mayor a 0");
+
+  const newPaidAmount = (debt.paidAmount ?? 0) + actual;
+  const fullyPaid = newPaidAmount >= debt.amount;
+
   await prisma.$transaction([
     prisma.clientDebt.update({
       where: { id: debtId },
-      data: { paid: true, paidAt: new Date(), paidAmount: actual },
+      data: {
+        paid: fullyPaid,
+        paidAt: fullyPaid ? new Date() : null,
+        paidAmount: newPaidAmount,
+      },
     }),
     prisma.client.update({
       where: { id: debt.clientId },
-      data: { pendingDebt: { decrement: debt.amount } },
+      data: { pendingDebt: { decrement: actual } },
     }),
   ]);
-  return { ok: true };
+  return { ok: true, applied: actual, fullyPaid };
 }
 
 /**
@@ -186,7 +199,7 @@ export async function getDebtors() {
   return prisma.client.findMany({
     where: { pendingDebt: { gt: 0 }, active: true },
     include: { debts: { where: { paid: false }, orderBy: { createdAt: "asc" } } },
-    orderBy: { pendingDebt: "desc" },
+    orderBy: [{ pendingDebt: "desc" }, { name: "asc" }],
   });
 }
 

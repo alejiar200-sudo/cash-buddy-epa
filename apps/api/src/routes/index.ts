@@ -103,6 +103,7 @@ apiRouter.delete("/branches/:id", requireAdmin, asyncHandler(branch.remove));
 apiRouter.post("/branches/:id/test-connection", asyncHandler(branch.testConnection));
 apiRouter.post("/branches/:id/sync", asyncHandler(branch.sync));
 apiRouter.post("/branches/sync-all", asyncHandler(branch.syncAll));
+apiRouter.post("/branches/:id/reconcile", requireAdmin, asyncHandler(branch.reconcile));
 
 // ─── Domiciliarios Shipday ────────────────────────────────────────────────────
 apiRouter.get("/sd/drivers", asyncHandler(driver.list));

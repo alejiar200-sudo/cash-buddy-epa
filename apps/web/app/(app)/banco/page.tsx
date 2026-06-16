@@ -93,8 +93,9 @@ export default function BancoPage() {
   const ingresos = movements.filter(m => m.type === "ingreso" || m.type === "consignacion").reduce((s, m) => s + m.amount, 0);
   const egresos  = movements.filter(m => m.type === "egreso" || m.type === "retiro").reduce((s, m) => s + m.amount, 0);
   const balance  = ingresos - egresos;
-  // Movimiento asignado a domiciliario = ya tiene contraparte implícita, no cuenta como pendiente
-  const sinContraparte = rows.filter(r => r.kind === "single" && (r.mov.type === "ingreso" || r.mov.type === "egreso") && !r.mov.driverName).length;
+  // Movimiento asignado a domiciliario = ya tiene contraparte implícita, no cuenta como pendiente.
+  // Movimiento marcado explícitamente "sin contraparte" tampoco cuenta como pendiente (#11).
+  const sinContraparte = rows.filter(r => r.kind === "single" && (r.mov.type === "ingreso" || r.mov.type === "egreso") && !r.mov.driverName && !r.mov.noCounterpart).length;
 
   // Registrar la contraparte: prefija tipo y monto, ENLAZA por pairWith. No copia descripción.
   function registrarContraria(m: UnifiedBankMovement) {
@@ -187,12 +188,14 @@ export default function BancoPage() {
             const Icon = cfg.icon;
             const isMixed = m.cashPart != null;
             const isPositive = m.type === "ingreso" || m.type === "consignacion";
-            // Rojo solo si no tiene contraparte NI domiciliario asignado. Con domiciliario = cerrado.
+            // Rojo solo si no tiene contraparte NI domiciliario asignado NI está marcado
+            // explícitamente como "sin contraparte" (#11). Con cualquiera de esos = cerrado.
             const hasDriver = !!m.driverName;
-            const red = (m.type === "ingreso" || m.type === "egreso") && !hasDriver;
+            const closed = hasDriver || m.noCounterpart === true;
+            const red = (m.type === "ingreso" || m.type === "egreso") && !closed;
             const cardClass = red
               ? "border-2 border-red-500 bg-red-500/10"
-              : hasDriver
+              : closed
               ? "border border-green-500/30 bg-green-500/[0.05]"
               : "border border-green-500/20 bg-green-500/[0.03]";
             return (
@@ -206,6 +209,7 @@ export default function BancoPage() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className={`font-medium text-sm truncate ${red ? "text-red-600 dark:text-red-400" : ""}`}>{m.description}</p>
                         {hasDriver && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-green-500/20 text-green-700 dark:text-green-400">✓ {m.driverName}</span>}
+                        {!hasDriver && m.noCounterpart && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-green-500/20 text-green-700 dark:text-green-400">✓ Sin contraparte</span>}
                         <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${cfg.badge}`}>{cfg.label}</span>
                         {isMixed ? (
                           <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-amber-500/20 text-amber-700 dark:text-amber-400">

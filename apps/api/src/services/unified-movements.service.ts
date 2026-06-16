@@ -1,4 +1,5 @@
 import { prisma } from "../lib/prisma";
+import { bogotaOpenRange, toBogotaDateStr } from "../lib/date-range";
 
 export interface UnifiedMovement {
   id: string;
@@ -17,21 +18,16 @@ export interface UnifiedMovement {
   editableDescription: boolean; // si el campo descripción es editable
 }
 
-function iso(d: Date): string { return d.toISOString().slice(0, 10); }
-// HH:MM en formato 24h para ordenar correctamente como string
+function iso(d: Date): string { return toBogotaDateStr(d); }
+// HH:MM en formato 24h (zona Bogotá), para ordenar correctamente como string
 function hm(d: Date): string {
-  const h = d.getHours().toString().padStart(2, "0");
-  const m = d.getMinutes().toString().padStart(2, "0");
-  return `${h}:${m}`;
+  return d.toLocaleTimeString("en-GB", { timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit" });
 }
 // Timestamp completo para ordenar con precisión de segundos
 function sortKey(d: Date): string { return d.toISOString(); }
 
 export async function getUnifiedMovements(params?: { from?: string; to?: string; limit?: number }): Promise<UnifiedMovement[]> {
-  // Usar UTC (Z) para consistencia con el resto del sistema en zona Bogotá (UTC-5)
-  const fromDate = params?.from ? new Date(params.from + "T00:00:00.000Z") : undefined;
-  const toDate = params?.to ? new Date(params.to + "T23:59:59.999Z") : undefined;
-  const dateWhere = (fromDate || toDate) ? { gte: fromDate, lte: toDate } : undefined;
+  const dateWhere = bogotaOpenRange(params?.from, params?.to);
 
   const [
     movements,

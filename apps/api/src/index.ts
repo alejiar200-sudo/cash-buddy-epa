@@ -1,3 +1,9 @@
+// Fija la zona horaria del proceso a Bogotá ANTES de cualquier otro import.
+// Salvaguarda adicional: aunque los servicios usan helpers explícitos de
+// apps/api/src/lib/date-range.ts, esto evita que cualquier `new Date()` local
+// que quede suelto (hoy o en el futuro) se calcule en la TZ del sistema operativo.
+process.env.TZ = "America/Bogota";
+
 import path from "node:path";
 import fs from "node:fs";
 import { env } from "./config/env";

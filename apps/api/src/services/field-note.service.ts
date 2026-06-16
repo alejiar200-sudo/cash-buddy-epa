@@ -1,7 +1,8 @@
 import { prisma } from "../lib/prisma";
+import { todayBogota } from "../lib/date-range";
 
 function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  return todayBogota();
 }
 
 /** Lista notas. Si se pasa `date` (YYYY-MM-DD) filtra solo las de ese día. */

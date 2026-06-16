@@ -1,5 +1,6 @@
 import { prisma } from "../lib/prisma";
 import { badRequest, notFound } from "../lib/errors";
+import { bogotaDayRange, todayBogota } from "../lib/date-range";
 
 const DELIVERED_FILTER = { in: ["DELIVERED", "COMPLETED"] };
 
@@ -259,14 +260,11 @@ export async function payCredit(
 }
 
 export async function getOrdersToday(branchId?: string) {
-  // Ventana del día calculada en la zona horaria local del servidor para evitar
-  // que pedidos de la noche queden fuera por el offset UTC.
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  // Ventana del día en zona Bogotá, sin depender de la TZ del proceso Node.
+  const { gte, lte } = bogotaDayRange(todayBogota());
   const where: Record<string, unknown> = {
     status: DELIVERED_FILTER,
-    deliveredAt: { gte: start, lte: end },
+    deliveredAt: { gte, lte },
   };
   if (branchId) where.branchId = branchId;
   return prisma.shipdayOrder.findMany({

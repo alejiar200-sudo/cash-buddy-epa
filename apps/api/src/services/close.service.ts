@@ -1,14 +1,6 @@
 import { prisma } from "../lib/prisma";
 import { conflict } from "../lib/errors";
-
-function monthRange(month: string) {
-  // UTC para consistencia con el resto del sistema (zona Bogotá UTC-5)
-  const [y, m] = month.split("-").map(Number);
-  const start = new Date(`${y}-${String(m).padStart(2, "0")}-01T00:00:00.000Z`);
-  const lastDay = new Date(y, m, 0).getDate();
-  const end = new Date(`${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}T23:59:59.999Z`);
-  return { gte: start, lte: end };
-}
+import { bogotaMonthRange as monthRange } from "../lib/date-range";
 
 /**
  * Reporte mensual con la lógica del Excel.

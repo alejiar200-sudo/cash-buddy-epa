@@ -17,7 +17,7 @@ function fmtDay(date: string) {
   return new Date(date + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "2-digit", month: "long" });
 }
 
-const SHIFT_LABELS = { AM: "☀️ Turno mañana", PM: "🌙 Turno tarde (verificación)", close: "🔒 Cierre final" };
+const SHIFT_LABELS = { AM: "☀️ Recibo AM", PM: "🌙 Recibo PM (verificación)", close: "🔒 Cierre" };
 
 export default function CajaPage() {
   const [shifts, setShifts] = useState<ShiftClose[]>([]);
@@ -58,7 +58,7 @@ export default function CajaPage() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-black">Caja</h1>
-          <p className="text-sm text-muted-foreground">Turno mañana y turno tarde (la tarde verifica lo que dejó la mañana)</p>
+          <p className="text-sm text-muted-foreground">Recibo AM y Recibo PM (el PM verifica lo que dejó el AM)</p>
         </div>
         <button
           onClick={() => setWizardOpen(true)}

@@ -1,4 +1,5 @@
 import { prisma } from "../lib/prisma";
+import { conflict } from "../lib/errors";
 
 export interface Denominations {
   bills: { value: number; qty: number }[];
@@ -33,6 +34,18 @@ export async function registerShift(data: {
   const totalCounted = sumDenominations(data.denominations);
   const difference = totalCounted - data.expectedAmount;
 
+  // #9 — Un cierre ya registrado queda bloqueado. Para corregirlo hay que pasar por
+  // el flujo de EditRequest (autorización administrativa), no sobrescribirlo aquí.
+  const existing = await prisma.shiftClose.findUnique({
+    where: { date_shift: { date: data.date, shift: data.shift } },
+  });
+  if (existing?.locked) {
+    throw conflict(
+      `El cierre de ${data.shift} del ${data.date} ya está registrado y bloqueado. ` +
+      "Solicita una edición autorizada para modificarlo.",
+    );
+  }
+
   return prisma.shiftClose.upsert({
     where: { date_shift: { date: data.date, shift: data.shift } },
     update: {
@@ -44,6 +57,7 @@ export async function registerShift(data: {
       difference,
       notes: data.notes,
       closedAt: new Date(),
+      locked: true,
     },
     create: {
       date: data.date,

@@ -33,3 +33,12 @@ export async function sync(req: Request, res: Response) {
 export async function syncAll(_req: Request, res: Response) {
   res.json(await svc.syncAllBranches());
 }
+
+export async function reconcile(req: Request, res: Response) {
+  const { from, to } = req.body as { from?: string; to?: string };
+  if (!from || !to) {
+    res.status(400).json({ error: "from y to (YYYY-MM-DD) son requeridos" });
+    return;
+  }
+  res.json(await svc.reconcileBranch(req.params.id, from, to));
+}

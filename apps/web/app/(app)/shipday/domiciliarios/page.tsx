@@ -71,7 +71,7 @@ export default function DomiciliariosShipdayPage() {
       cur.orders.push(o);
       map.set(key, cur);
     }
-    return Array.from(map.values()).sort((a, b) => b.count - a.count);
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, "es"));
   }, [todayOrders]);
 
   const totalDebt = drivers.reduce((s, d) => s + d.pendingDebt, 0);

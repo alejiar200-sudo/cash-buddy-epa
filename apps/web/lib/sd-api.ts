@@ -191,6 +191,7 @@ export interface UnifiedBankMovement {
   createdByName?: string | null;
   groupId?: string | null;
   pairId?: string | null;
+  noCounterpart?: boolean;
   // Para movimientos mixtos consolidados:
   cashPart?: number;
   bankPart?: number;
@@ -228,6 +229,7 @@ export async function getUnifiedBankMovements(params?: { from?: string; to?: str
     driverName: t.driverName,
     createdByName: t.createdByName,
     pairId: t.pairId,
+    noCounterpart: t.noCounterpart,
     date: t.date,
     source: "bank" as const,
   }));
@@ -237,7 +239,7 @@ export async function getUnifiedBankMovements(params?: { from?: string; to?: str
     if (parts.length === 1) {
       // Mitad huérfana (no debería pasar): tratarla como simple.
       const t = parts[0];
-      fromTxs.push({ id: t.id, type: t.type as BankMovementType, medium: t.medium ?? "bank", amount: t.amount, description: t.description, reference: t.reference, driverName: t.driverName, createdByName: t.createdByName, groupId, pairId: t.pairId, date: t.date, source: "bank" });
+      fromTxs.push({ id: t.id, type: t.type as BankMovementType, medium: t.medium ?? "bank", amount: t.amount, description: t.description, reference: t.reference, driverName: t.driverName, createdByName: t.createdByName, groupId, pairId: t.pairId, noCounterpart: t.noCounterpart, date: t.date, source: "bank" });
       continue;
     }
     const cashPart = parts.find(p => p.medium === "cash")?.amount ?? 0;
@@ -253,6 +255,7 @@ export async function getUnifiedBankMovements(params?: { from?: string; to?: str
       createdByName: head.createdByName,
       groupId,
       pairId: head.pairId,
+      noCounterpart: head.noCounterpart,
       cashPart,
       bankPart,
       date: head.date,
@@ -621,6 +624,7 @@ export interface BankTransaction {
   createdByName?: string | null;
   groupId?: string | null;
   pairId?: string | null;
+  noCounterpart?: boolean;
   date: string;
   createdAt: string;
 }

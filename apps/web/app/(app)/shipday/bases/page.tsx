@@ -81,8 +81,8 @@ export default function BasesPage() {
   const driverGroups = [...groupMap.values()]
     .map(g => ({ ...g, balance: g.given - g.paid }))
     .filter(g => !search.trim() || g.name.toLowerCase().includes(search.toLowerCase()))
-    // Primero los que deben (rojo), luego cuadrados; dentro, mayor saldo primero
-    .sort((a, b) => (b.balance - a.balance));
+    // Primero los que deben (rojo), luego cuadrados; dentro, mayor saldo primero y alfabético como criterio final
+    .sort((a, b) => (b.balance - a.balance) || a.name.localeCompare(b.name, "es"));
 
   return (
     <div className="space-y-6">

@@ -1,14 +1,7 @@
 import ExcelJS from "exceljs";
 import { prisma } from "../lib/prisma";
 import { getMonthlyReport } from "./close.service";
-
-function monthRange(month: string) {
-  const [y, m] = month.split("-").map(Number);
-  const start = new Date(`${y}-${String(m).padStart(2, "0")}-01T00:00:00.000Z`);
-  const lastDay = new Date(y, m, 0).getDate();
-  const end = new Date(`${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}T23:59:59.999Z`);
-  return { gte: start, lte: end };
-}
+import { bogotaMonthRange as monthRange } from "../lib/date-range";
 
 function cop(n: number) {
   return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(n);

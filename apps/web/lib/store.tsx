@@ -113,6 +113,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false));
   }, [user, reloadAll]);
 
+  // Refresco en vivo silencioso: antes este estado se cargaba una sola vez al
+  // montar y nunca se volvía a pedir, así que dos sesiones (ej. un PC local y
+  // otro remoto por Tailscale) veían snapshots distintos del mismo backend.
+  // Mismo patrón que ya usan pedidos/banco/dashboard (poll cada pocos segundos).
+  useEffect(() => {
+    if (!user) return;
+    const tick = () => {
+      if (typeof document === "undefined" || document.visibilityState === "visible") {
+        reloadAll().catch(() => {});
+      }
+    };
+    const id = setInterval(tick, 8000);
+    document.addEventListener("visibilitychange", tick);
+    return () => { clearInterval(id); document.removeEventListener("visibilitychange", tick); };
+  }, [user, reloadAll]);
+
   const refreshDay = useCallback(async (date: string) => {
     const day = await api<DayData>(`/days/${date}`);
     setState((s) => ({ ...s, days: { ...s.days, [date]: day } }));

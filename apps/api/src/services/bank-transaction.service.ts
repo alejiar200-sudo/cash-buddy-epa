@@ -1,14 +1,11 @@
 import { prisma } from "../lib/prisma";
+import { bogotaOpenRange } from "../lib/date-range";
 
 export async function list(params?: { type?: "ingreso" | "egreso"; from?: string; to?: string }) {
   const where: Record<string, unknown> = {};
   if (params?.type) where.type = params.type;
-  if (params?.from || params?.to) {
-    where.date = {
-      ...(params.from ? { gte: new Date(params.from) } : {}),
-      ...(params.to ? { lte: new Date(params.to + "T23:59:59") } : {}),
-    };
-  }
+  const dateRange = bogotaOpenRange(params?.from, params?.to);
+  if (dateRange) where.date = dateRange;
   return prisma.bankTransaction.findMany({
     where,
     orderBy: { date: "desc" },
@@ -30,6 +27,8 @@ export async function create(data: {
   createdByName?: string | null;
   // Si se registra como contraparte de otro movimiento, su id va aquí para enlazarlos.
   pairWith?: string;
+  // Marca explícita: este movimiento NO requiere contraparte (es independiente).
+  noCounterpart?: boolean;
 }) {
   let driverName: string | undefined;
   if (data.driverId) {
@@ -63,6 +62,7 @@ export async function create(data: {
     createdBy: data.createdBy ?? null,
     createdByName: data.createdByName ?? null,
     pairId,
+    noCounterpart: data.noCounterpart === true,
   };
 
   const cash = Math.round(data.cashAmount ?? 0);
@@ -96,10 +96,7 @@ export async function remove(id: string) {
 }
 
 export async function summary(from?: string, to?: string) {
-  const dateWhere = (from || to) ? {
-    ...(from ? { gte: new Date(from) } : {}),
-    ...(to ? { lte: new Date(to + "T23:59:59") } : {}),
-  } : undefined;
+  const dateWhere = bogotaOpenRange(from, to);
 
   const [ingresosAgg, egresosAgg, count] = await Promise.all([
     prisma.bankTransaction.aggregate({

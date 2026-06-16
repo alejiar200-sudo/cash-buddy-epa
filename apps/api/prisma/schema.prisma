@@ -385,6 +385,7 @@ model MonthlyClose {
   closedBy          String?
   closedByName      String?
   closedAt        DateTime @default(now())
+  locked          Boolean  @default(true) // bloqueado al cerrarse; modificarlo requiere EditRequest
 
   branch Branch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
 
@@ -446,6 +447,7 @@ model BankTransaction {
   driverName  String?    // nombre cacheado para historial
   groupId     String?    // enlaza las dos mitades de un movimiento mixto (efectivo+transferencia)
   pairId      String?    // enlaza un movimiento con su contraparte (salida ↔ retorno) de forma explícita
+  noCounterpart Boolean  @default(false) // marcado explícito: este movimiento NO requiere contraparte
   createdBy     String?
   createdByName String?
   date        DateTime   @default(now())
@@ -476,6 +478,7 @@ model ShiftClose {
   editedByName  String?
   editedAt      DateTime?
   closedAt    DateTime   @default(now())
+  locked      Boolean    @default(true) // bloqueado al registrarse; modificarlo requiere EditRequest
 
   @@unique([date, shift])
   @@index([date])
