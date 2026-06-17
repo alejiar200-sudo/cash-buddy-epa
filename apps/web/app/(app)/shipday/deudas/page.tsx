@@ -17,6 +17,8 @@ export default function DeudasPage() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<DriverDebt | null>(null);
   const [paying, setPaying] = useState<DriverDebt | null>(null);
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<"debt" | "alpha">("debt");
 
   function parseResponse(raw: unknown) {
     if (!raw || typeof raw !== "object") return { debtors: [], creditors: [] };
@@ -54,6 +56,14 @@ export default function DeudasPage() {
   const totalDebt = (debtors ?? []).reduce((s, d) => s + (d.pendingDebt ?? 0), 0);
   const totalCredit = (creditors ?? []).reduce((s, d) => s + (d.creditAmount ?? 0), 0);
   const highDebt = (debtors ?? []).filter(d => d.pendingDebt > 100000);
+
+  // Búsqueda + orden de la lista de deudores.
+  const q = search.trim().toLowerCase();
+  const viewDebtors = (debtors ?? [])
+    .filter(d => !q || d.name.toLowerCase().includes(q))
+    .sort((a, b) => sortBy === "alpha"
+      ? a.name.localeCompare(b.name, "es", { sensitivity: "base" })
+      : b.pendingDebt - a.pendingDebt);
 
   return (
     <div className="space-y-6">
@@ -113,12 +123,39 @@ export default function DeudasPage() {
         <div className="text-center py-20 text-muted-foreground">Cargando...</div>
       ) : (
         <div className="space-y-6">
+          {/* Buscador + orden */}
+          {debtors.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative flex-1 min-w-[200px]">
+                <input
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  autoComplete="off" spellCheck={false}
+                  placeholder="Buscar domiciliario…"
+                  className="w-full glass rounded-xl pl-9 pr-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/40 bg-background border border-border"
+                />
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">🔍</span>
+              </div>
+              <div className="flex gap-1 rounded-xl border border-border p-1 bg-background">
+                <button onClick={() => setSortBy("debt")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${sortBy === "debt" ? "bg-primary text-primary-foreground" : "hover:bg-secondary"}`}>
+                  Mayor deuda
+                </button>
+                <button onClick={() => setSortBy("alpha")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${sortBy === "alpha" ? "bg-primary text-primary-foreground" : "hover:bg-secondary"}`}>
+                  A–Z
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Domiciliarios que deben a la empresa — ROJO */}
           {debtors.length > 0 && (
             <div className="glass-strong rounded-3xl overflow-hidden">
               <div className="px-5 py-3 border-b border-border bg-red-500/5 flex items-center gap-2">
                 <span className="w-3 h-3 rounded-full bg-red-500 shrink-0" />
                 <span className="font-bold text-sm">Domiciliarios que deben a la empresa</span>
+                <span className="text-xs text-muted-foreground ml-auto">{viewDebtors.length} de {debtors.length}</span>
               </div>
               <table className="w-full text-sm">
                 <thead>
@@ -132,7 +169,10 @@ export default function DeudasPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {debtors.map((d, i) => {
+                  {viewDebtors.length === 0 && (
+                    <tr><td colSpan={6} className="px-5 py-6 text-center text-sm text-muted-foreground">Sin resultados para “{search}”</td></tr>
+                  )}
+                  {viewDebtors.map((d, i) => {
                     const level = d.pendingDebt > 200000 ? "crítico" : d.pendingDebt > 100000 ? "alto" : d.pendingDebt > 50000 ? "medio" : "bajo";
                     const levelStyle = { crítico: "bg-red-200 text-red-800", alto: "bg-red-100 text-red-700", medio: "bg-orange-100 text-orange-700", bajo: "bg-yellow-100 text-yellow-700" }[level];
                     return (
