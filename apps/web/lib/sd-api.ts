@@ -69,7 +69,7 @@ export const getDrivers = (branchId?: string) =>
 export const getDriverDetail = (id: string) => apiFetch<DriverDetail>(`/sd/drivers/${id}`);
 export const getDriverStatement = (id: string) => apiFetch<DriverStatement>(`/sd/drivers/${id}/statement`);
 export const registerPayment = (id: string, amount: number, medium: "cash" | "bank", notes?: string) =>
-  apiFetch<{ payment: Payment; baseAlloc: number; commissionAlloc: number; basePendingBefore: number }>(
+  apiFetch<{ payment: Payment; baseAlloc: number; commissionAlloc: number; basePendingBefore: number; excess: number; creditAmount: number }>(
     `/sd/drivers/${id}/payment`,
     { method: "POST", body: JSON.stringify({ amount, medium, notes }) },
   );
@@ -443,6 +443,8 @@ export interface DriverStatement {
   totalBasesPaid: number;
   totalPaid: number;
   pendingDebt: number;
+  creditAmount: number;
+  creditMedium?: string | null;
   orders: Order[];
   bases: BaseTransaction[];
   payments: Payment[];

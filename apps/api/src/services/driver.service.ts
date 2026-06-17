@@ -88,14 +88,22 @@ export async function registerPayment(driverId: string, amount: number, medium: 
       });
     }
 
-    // La deuda total baja por el monto completo (base + comisión)
+    // La deuda baja hasta 0; el exceso se convierte en crédito (empresa le debe al domiciliario)
+    const newDebt = Math.max(0, driver.pendingDebt - amount);
+    const excess = Math.max(0, amount - driver.pendingDebt);
+    const newCredit = (driver.creditAmount ?? 0) + excess;
     await tx.driver.update({
       where: { id: driverId },
-      data: { pendingDebt: { decrement: amount } },
+      data: {
+        pendingDebt: newDebt,
+        ...(excess > 0 ? { creditAmount: newCredit, creditMedium: medium } : {}),
+      },
     });
   });
 
-  return { payment, baseAlloc, commissionAlloc, basePendingBefore: basePending };
+  const excess = Math.max(0, amount - driver.pendingDebt);
+  const newCredit = (driver.creditAmount ?? 0) + excess;
+  return { payment, baseAlloc, commissionAlloc, basePendingBefore: basePending, excess, creditAmount: excess > 0 ? newCredit : 0 };
 }
 
 export async function getDriverStatement(id: string) {
@@ -125,6 +133,8 @@ export async function getDriverStatement(id: string) {
     totalBasesPaid,
     totalPaid,
     pendingDebt: driver.pendingDebt,
+    creditAmount: driver.creditAmount ?? 0,
+    creditMedium: driver.creditMedium ?? null,
     orders,
     bases,
     payments,

@@ -30,6 +30,7 @@ export function DriverStatementModal({ driver, onClose, onRefresh }: Props) {
 
   const basePending = statement ? Math.max(0, statement.totalBasesGiven - statement.totalBasesPaid) : 0;
   const totalOwed = statement?.pendingDebt ?? 0;
+  const companyOwes = statement?.creditAmount ?? 0;
 
   const handlePay = async () => {
     const amount = parseInt(payAmount.replace(/\D/g, ""));
@@ -43,6 +44,7 @@ export function DriverStatementModal({ driver, onClose, onRefresh }: Props) {
       const parts: string[] = [];
       if (r?.baseAlloc) parts.push(`${formatCOP(r.baseAlloc)} a base`);
       if (r?.commissionAlloc) parts.push(`${formatCOP(r.commissionAlloc)} a comisión`);
+      if (r?.excess && r.excess > 0) parts.push(`la empresa queda debiendo ${formatCOP(r.excess)}`);
       toast.success(`Pago ${formatCOP(amount)} (${payMedium === "cash" ? "efectivo" : "transferencia"})${parts.length ? ` · ${parts.join(" · ")}` : ""}`);
       setPayAmount("");
       onRefresh();
@@ -73,6 +75,7 @@ export function DriverStatementModal({ driver, onClose, onRefresh }: Props) {
               <Stat label="Valor entregado" value={formatCOP(statement.totalValue)} />
               <Stat label="% empresa acumulado" value={formatCOP(statement.totalCompany)} />
               <Stat label="Deuda total" value={formatCOP(totalOwed)} highlight={totalOwed > 0} />
+              {companyOwes > 0 && <Stat label="Empresa le debe" value={formatCOP(companyOwes)} credit />}
             </div>
 
             {/* Desglose de deuda */}
@@ -83,18 +86,18 @@ export function DriverStatementModal({ driver, onClose, onRefresh }: Props) {
             </div>
 
             {/* Pago */}
-            <div className={`rounded-2xl p-4 space-y-3 ${totalOwed > 0 ? "bg-red-500/10 border border-red-500/20" : "bg-secondary/40"}`}>
+            <div className={`rounded-2xl p-4 space-y-3 ${totalOwed > 0 ? "bg-red-500/10 border border-red-500/20" : companyOwes > 0 ? "bg-amber-500/10 border border-amber-500/20" : "bg-secondary/40"}`}>
               <div className="flex items-center justify-between">
-                <p className={`font-bold ${totalOwed > 0 ? "text-red-700" : ""}`}>
-                  {totalOwed > 0 ? "Registrar pago (parcial o total)" : "Sin deuda pendiente"}
+                <p className={`font-bold ${totalOwed > 0 ? "text-red-700" : companyOwes > 0 ? "text-amber-700 dark:text-amber-400" : ""}`}>
+                  {totalOwed > 0 ? "Registrar pago (parcial o total)" : companyOwes > 0 ? "La empresa le debe — pago anticipado" : "Sin deuda pendiente"}
                 </p>
-                {totalOwed > 0 && (
-                  <span className="text-xs font-bold tnum text-red-700">Debe: {formatCOP(totalOwed)}</span>
-                )}
+                {totalOwed > 0 && <span className="text-xs font-bold tnum text-red-700">Debe: {formatCOP(totalOwed)}</span>}
+                {companyOwes > 0 && <span className="text-xs font-bold tnum text-amber-700">Empresa debe: {formatCOP(companyOwes)}</span>}
               </div>
               {totalOwed > 0 && (
                 <p className="text-xs text-muted-foreground">
                   Se descontará primero <strong>{formatCOP(basePending)}</strong> de base pendiente; el resto, a comisión.
+                  {" "}Si el monto supera la deuda, la empresa quedará debiendo el exceso.
                 </p>
               )}
 
@@ -134,7 +137,7 @@ export function DriverStatementModal({ driver, onClose, onRefresh }: Props) {
                 />
                 <button
                   onClick={handlePay}
-                  disabled={paying || totalOwed <= 0}
+                  disabled={paying}
                   className="px-4 py-2.5 bg-primary text-primary-foreground rounded-xl font-bold hover:opacity-90 disabled:opacity-50 transition"
                 >
                   {paying ? "..." : "Registrar"}
@@ -207,11 +210,11 @@ export function DriverStatementModal({ driver, onClose, onRefresh }: Props) {
   );
 }
 
-function Stat({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
+function Stat({ label, value, highlight, credit }: { label: string; value: string; highlight?: boolean; credit?: boolean }) {
   return (
-    <div className={`rounded-2xl p-3 ${highlight ? "bg-red-500/10 border border-red-500/20" : "bg-secondary/40"}`}>
+    <div className={`rounded-2xl p-3 ${highlight ? "bg-red-500/10 border border-red-500/20" : credit ? "bg-amber-500/10 border border-amber-500/20" : "bg-secondary/40"}`}>
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={`font-black text-lg tnum ${highlight ? "text-red-500" : ""}`}>{value}</p>
+      <p className={`font-black text-lg tnum ${highlight ? "text-red-500" : credit ? "text-amber-500" : ""}`}>{value}</p>
     </div>
   );
 }
