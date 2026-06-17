@@ -6,7 +6,9 @@ import { toast } from "sonner";
 import * as api from "@/lib/sd-api";
 import type { UnifiedBankMovement, Driver } from "@/lib/sd-api";
 import { UnifiedBankWizard } from "@/components/wizards/UnifiedBankWizard";
+import { DeleteRequestWizard } from "@/components/wizards/DeleteRequestWizard";
 import { useLive } from "@/lib/use-live";
+import { useAuth } from "@/lib/auth";
 import { formatCOP as _fmt } from "@/lib/format";
 
 function formatCOP(n: number) { return _fmt ? _fmt(n) : "$" + n.toLocaleString("es-CO"); }
@@ -72,6 +74,9 @@ export default function BancoPage() {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [prefill, setPrefill] = useState<{ type: "ingreso" | "egreso"; amount: number; pairWith?: string } | undefined>();
   const [applyModal, setApplyModal] = useState<{ mov: UnifiedBankMovement } | null>(null);
+  const [deleteReq, setDeleteReq] = useState<UnifiedBankMovement | null>(null);
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
 
   // `silent` = refresco en vivo: sin spinner y sin re-render si nada cambió (evita parpadeo).
   const load = async (silent = false) => {
@@ -105,6 +110,8 @@ export default function BancoPage() {
   }
 
   async function remove(m: UnifiedBankMovement) {
+    // No admin → enviar solicitud de eliminación desde aquí mismo (no ir a Movimientos).
+    if (!isAdmin) { setDeleteReq(m); return; }
     if (!confirm("¿Eliminar este movimiento?")) return;
     try {
       if (m.source === "bank") await api.deleteBankTransaction(m.id);
@@ -286,6 +293,18 @@ export default function BancoPage() {
           mov={applyModal.mov}
           onClose={() => setApplyModal(null)}
           onDone={() => { setApplyModal(null); load(); }}
+        />
+      )}
+
+      {/* No admin: solicitud de eliminación del movimiento de banco */}
+      {deleteReq && (
+        <DeleteRequestWizard
+          open={!!deleteReq}
+          onOpenChange={(v) => { if (!v) setDeleteReq(null); }}
+          entityType={deleteReq.source === "bank" ? "BankTransaction" : "Conversion"}
+          entityId={deleteReq.id}
+          entityLabel={`${deleteReq.description} · ${formatCOP(deleteReq.amount)}`}
+          onDone={load}
         />
       )}
     </div>

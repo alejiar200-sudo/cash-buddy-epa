@@ -7,8 +7,10 @@ import * as api from "@/lib/sd-api";
 import type { ShiftClose } from "@/lib/sd-api";
 import { ShiftCloseWizard } from "@/components/wizards/ShiftCloseWizard";
 import { EditRequestWizard, type EditableField } from "@/components/wizards/EditRequestWizard";
+import { DeleteRequestWizard } from "@/components/wizards/DeleteRequestWizard";
 import { useLive } from "@/lib/use-live";
-import { Pencil } from "lucide-react";
+import { useAuth } from "@/lib/auth";
+import { Pencil, Trash2 } from "lucide-react";
 
 function formatCOP(n: number) { return "$" + n.toLocaleString("es-CO"); }
 function todayStr() { return new Date().toISOString().slice(0, 10); }
@@ -24,6 +26,17 @@ export default function CajaPage() {
   const [loading, setLoading] = useState(true);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editShift, setEditShift] = useState<ShiftClose | null>(null);
+  const [deleteShiftReq, setDeleteShiftReq] = useState<ShiftClose | null>(null);
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+
+  const SHIFT_NAME = (sh: string) => sh === "AM" ? "Mañana" : sh === "PM" ? "Tarde" : "Cierre";
+  async function handleDeleteShift(s: ShiftClose) {
+    if (!isAdmin) { setDeleteShiftReq(s); return; } // no admin → solicitud
+    if (!confirm(`¿Eliminar el cierre de ${SHIFT_NAME(s.shift)}?`)) return;
+    try { await api.deleteShift(s.id); toast.success("Cierre eliminado"); load(); }
+    catch (err) { toast.error(String(err)); }
+  }
   const today = todayStr();
 
   const load = async (silent = false) => {
@@ -171,10 +184,17 @@ export default function CajaPage() {
                         </div>
                         <button
                           onClick={() => setEditShift(s)}
-                          title="Solicitar edición (requiere aprobación del administrador)"
+                          title={isAdmin ? "Editar cierre" : "Solicitar edición (requiere aprobación del administrador)"}
                           className="p-2 rounded-lg hover:bg-secondary transition text-muted-foreground hover:text-foreground"
                         >
                           <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteShift(s)}
+                          title={isAdmin ? "Eliminar cierre" : "Solicitar eliminación (requiere aprobación del administrador)"}
+                          className="p-2 rounded-lg hover:bg-red-500/10 transition text-muted-foreground hover:text-red-500"
+                        >
+                          <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
                     </div>
@@ -207,6 +227,18 @@ export default function CajaPage() {
             { field: "handedBy", label: "Entrega", currentValue: editShift.handedBy ?? "", type: "text" },
             { field: "notes", label: "Observaciones", currentValue: editShift.notes ?? "", type: "text" },
           ] satisfies EditableField[]}
+          onDone={load}
+        />
+      )}
+
+      {/* No admin: solicitud de eliminación de cierre de turno */}
+      {deleteShiftReq && (
+        <DeleteRequestWizard
+          open={!!deleteShiftReq}
+          onOpenChange={(v) => { if (!v) setDeleteShiftReq(null); }}
+          entityType="ShiftClose"
+          entityId={deleteShiftReq.id}
+          entityLabel={`${SHIFT_LABELS[deleteShiftReq.shift]} — ${fmtDay(deleteShiftReq.date)}`}
           onDone={load}
         />
       )}

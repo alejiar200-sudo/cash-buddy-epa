@@ -88,6 +88,9 @@ export const giveBase = (driverId: string, data: BaseSplit) =>
 export const payBase = (driverId: string, data: BaseSplit) =>
   apiFetch(`/sd/bases/${driverId}/pay`, { method: "POST", body: JSON.stringify(data) });
 export const getBaseSummary = (driverId: string) => apiFetch<BaseSummary>(`/sd/bases/${driverId}/summary`);
+export const deleteBase = (id: string) => apiFetch<void>(`/sd/bases/${id}`, { method: "DELETE" });
+export const editBase = (id: string, data: { cashAmount?: number; bankAmount?: number; amount?: number; notes?: string }) =>
+  apiFetch<void>(`/sd/bases/${id}`, { method: "PATCH", body: JSON.stringify(data) });
 
 // ─── Conversions ──────────────────────────────────────────────────────────────
 
@@ -726,6 +729,7 @@ export const getShifts = (params?: { from?: string; to?: string }) => {
   return apiFetch<ShiftClose[]>(`/shifts${q.toString() ? "?" + q : ""}`);
 };
 export const getShiftsForDate = (date: string) => apiFetch<ShiftClose[]>(`/shifts/${date}`);
+export const deleteShift = (id: string) => apiFetch<void>(`/shifts/${id}`, { method: "DELETE" });
 
 /** #6 — efectivo y banco esperados calculados automáticamente para la fecha. */
 export const getExpectedForDate = (date: string) =>

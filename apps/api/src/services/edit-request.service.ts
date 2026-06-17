@@ -167,6 +167,10 @@ async function deleteEntity(entityType: string, entityId: string) {
     case "Conversion":
       await prisma.conversion.delete({ where: { id: entityId } });
       break;
+    case "ShiftClose":
+      // Cierre de turno: es solo un registro de conteo, no afecta deudas/saldos.
+      await prisma.shiftClose.delete({ where: { id: entityId } });
+      break;
     default:
       console.warn(`[delete-request] entityType desconocido: ${entityType}`);
   }
@@ -332,11 +336,17 @@ async function applyBaseTransactionChange(baseId: string, newValues: Record<stri
   const base = await prisma.baseTransaction.findUnique({ where: { id: baseId } });
   if (!base) throw new Error("Base no encontrada");
 
-  const newAmount = newValues.amount != null ? Number(newValues.amount) : base.amount;
+  // Si vienen cashAmount/bankAmount, el total se recalcula a partir de ellos
+  // (a menos que se haya enviado un amount explícito).
+  const newCash = newValues.cashAmount != null ? Number(newValues.cashAmount) : base.cashAmount;
+  const newBank = newValues.bankAmount != null ? Number(newValues.bankAmount) : base.bankAmount;
+  const newAmount = newValues.amount != null
+    ? Number(newValues.amount)
+    : (newValues.cashAmount != null || newValues.bankAmount != null ? newCash + newBank : base.amount);
   const delta = newAmount - base.amount;
 
   await prisma.$transaction(async (tx) => {
-    await tx.baseTransaction.update({ where: { id: baseId }, data: { ...newValues, amount: newAmount } });
+    await tx.baseTransaction.update({ where: { id: baseId }, data: { ...newValues, cashAmount: newCash, bankAmount: newBank, amount: newAmount } });
     if (delta !== 0) {
       // entrega aumenta deuda, pago la reduce
       const sign = base.type === "entrega" ? 1 : -1;

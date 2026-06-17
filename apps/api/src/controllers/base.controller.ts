@@ -17,6 +17,14 @@ export async function pay(req: Request, res: Response) {
   res.status(201).json(await svc.payBase(req.params.driverId, { ...req.body, createdBy: actor.id, createdByName: actor.name }));
 }
 
+export async function remove(req: Request, res: Response) {
+  res.json(await svc.removeBase(req.params.id));
+}
+
+export async function edit(req: Request, res: Response) {
+  res.json(await svc.editBase(req.params.id, req.body));
+}
+
 export async function summary(req: Request, res: Response) {
   res.json(await svc.getBaseSummary(req.params.driverId));
 }

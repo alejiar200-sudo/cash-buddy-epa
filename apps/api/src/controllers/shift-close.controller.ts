@@ -43,3 +43,7 @@ export async function list(req: Request, res: Response) {
   const { from, to } = req.query as Record<string, string>;
   res.json(await svc.listShifts(from, to));
 }
+
+export async function remove(req: Request, res: Response) {
+  res.json(await svc.deleteShift(req.params.id));
+}

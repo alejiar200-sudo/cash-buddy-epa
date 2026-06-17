@@ -153,7 +153,8 @@ Luego abre `CashBuddy.exe`.
 
 | Problema | Solución |
 |----------|----------|
-| El `.exe` se queda en "Iniciando…" | Verifica que el servicio **PostgreSQL** esté activo (`postgresql-x64-17`). Revisa `cashbuddy-launcher.log`. |
+| El `.exe` se queda en "Iniciando…" | Verifica que el servicio **PostgreSQL** esté activo (`postgresql-x64-17`). Revisa `cashbuddy-launcher.log`. El lanzador espera hasta 90 s a que el servidor responda. |
+| **"This site can't be reached"** al abrir | Corregido: el lanzador ahora **espera** a que el puerto 4000 responda antes de cargar la app y **reintenta** si la conexión falla. Si reaparece, recompila con `powershell -ExecutionPolicy Bypass -File scripts\build-launcher.ps1`. |
 | "No se encontró Node.js" | Reinstala Node.js y reinicia el PC. |
 | La app no carga / pantalla en blanco | Asegúrate de haber ejecutado `npm run build` con `NODE_ENV=production`. |
 | Error de base de datos | Revisa que `DATABASE_URL` en `.env` tenga la contraseña correcta. |

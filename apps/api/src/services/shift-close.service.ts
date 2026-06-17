@@ -75,6 +75,11 @@ export async function registerShift(data: {
   });
 }
 
+export async function deleteShift(id: string) {
+  await prisma.shiftClose.delete({ where: { id } });
+  return { ok: true };
+}
+
 export async function listShifts(from?: string, to?: string) {
   return prisma.shiftClose.findMany({
     where: {

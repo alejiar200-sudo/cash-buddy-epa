@@ -119,6 +119,8 @@ apiRouter.get("/sd/bases", asyncHandler(base.list));
 apiRouter.post("/sd/bases/:driverId/give", asyncHandler(base.give));
 apiRouter.post("/sd/bases/:driverId/pay", asyncHandler(base.pay));
 apiRouter.get("/sd/bases/:driverId/summary", asyncHandler(base.summary));
+apiRouter.patch("/sd/bases/:id", requireAdmin, asyncHandler(base.edit));
+apiRouter.delete("/sd/bases/:id", requireAdmin, asyncHandler(base.remove));
 
 // ─── Conversiones ─────────────────────────────────────────────────────────────
 apiRouter.get("/sd/conversions", asyncHandler(conversion.list));
@@ -166,6 +168,7 @@ apiRouter.get("/shifts", asyncHandler(shiftClose.list));
 apiRouter.get("/shifts/:date/expected", asyncHandler(shiftClose.expectedForDate));
 apiRouter.get("/shifts/:date", asyncHandler(shiftClose.getForDate));
 apiRouter.post("/shifts", asyncHandler(shiftClose.register));
+apiRouter.delete("/shifts/:id", requireAdmin, asyncHandler(shiftClose.remove));
 
 // ─── Movimientos unificados (todos los sistemas) ──────────────────────────────
 apiRouter.get("/movements/unified", asyncHandler(unifiedMov.list));

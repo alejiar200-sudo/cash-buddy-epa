@@ -1,6 +1,35 @@
 import { prisma } from "../lib/prisma";
 import { notFound, badRequest } from "../lib/errors";
 
+// Eliminar una base (admin directo): revierte el efecto en la deuda del domiciliario.
+export async function removeBase(id: string) {
+  const base = await prisma.baseTransaction.findUnique({ where: { id } });
+  if (!base) throw notFound("Base no encontrada");
+  const sign = base.type === "entrega" ? -1 : 1; // entrega subió deuda → al borrar baja
+  await prisma.$transaction([
+    prisma.driver.update({ where: { id: base.driverId }, data: { pendingDebt: { increment: sign * base.amount } } }),
+    prisma.baseTransaction.delete({ where: { id } }),
+  ]);
+  return { ok: true };
+}
+
+// Editar el monto de una base (admin directo): ajusta la deuda por la diferencia.
+export async function editBase(id: string, input: { cashAmount?: number; bankAmount?: number; amount?: number; notes?: string }) {
+  const base = await prisma.baseTransaction.findUnique({ where: { id } });
+  if (!base) throw notFound("Base no encontrada");
+  const cashAmount = Math.round(input.cashAmount ?? base.cashAmount);
+  const bankAmount = Math.round(input.bankAmount ?? base.bankAmount);
+  const newAmount = (cashAmount + bankAmount) || Math.round(input.amount ?? base.amount);
+  if (newAmount <= 0) throw badRequest("El monto debe ser mayor a 0");
+  const delta = newAmount - base.amount;
+  const sign = base.type === "entrega" ? 1 : -1; // entrega suma deuda; pago resta
+  await prisma.$transaction([
+    prisma.driver.update({ where: { id: base.driverId }, data: { pendingDebt: { increment: sign * delta } } }),
+    prisma.baseTransaction.update({ where: { id }, data: { amount: newAmount, cashAmount, bankAmount, ...(input.notes != null ? { notes: input.notes } : {}) } }),
+  ]);
+  return { ok: true };
+}
+
 export async function listBases(branchId?: string, driverId?: string) {
   const where: Record<string, unknown> = {};
   if (branchId) where.branchId = branchId;

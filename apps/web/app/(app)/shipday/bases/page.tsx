@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, RefreshCw, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Plus, RefreshCw, CheckCircle2, AlertTriangle, Pencil, Trash2 } from "lucide-react";
 import { useLive } from "@/lib/use-live";
 import { toast } from "sonner";
 import * as api from "@/lib/sd-api";
 import type { Driver, Branch, BaseTransaction } from "@/lib/sd-api";
 import { formatCOP } from "@/lib/format";
+import { useAuth } from "@/lib/auth";
+import { EditRequestWizard, type EditableField } from "@/components/wizards/EditRequestWizard";
+import { DeleteRequestWizard } from "@/components/wizards/DeleteRequestWizard";
 
 export default function BasesPage() {
   const [bases, setBases] = useState<BaseTransaction[]>([]);
@@ -20,6 +23,10 @@ export default function BasesPage() {
   const [formBank, setFormBank] = useState("");
   const [formNotes, setFormNotes] = useState("");
   const [search, setSearch] = useState("");
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const [editBaseReq, setEditBaseReq] = useState<BaseTransaction | null>(null);
+  const [deleteBaseReq, setDeleteBaseReq] = useState<BaseTransaction | null>(null);
   const [saving, setSaving] = useState(false);
 
   const load = async (silent = false) => {
@@ -39,6 +46,31 @@ export default function BasesPage() {
 
   useEffect(() => { load(); }, [branchId]);
   useLive(() => load(true), 5000);
+
+  async function handleDeleteBase(b: BaseTransaction) {
+    if (!isAdmin) { setDeleteBaseReq(b); return; } // no admin → solicitud
+    const tipo = b.type === "entrega" ? "entrega de base" : "devolución de base";
+    if (!confirm(`¿Eliminar esta ${tipo} de ${formatCOP(b.amount)}?`)) return;
+    try { await api.deleteBase(b.id); toast.success("Movimiento eliminado"); load(); }
+    catch (err) { toast.error(String(err)); }
+  }
+  async function handleEditBase(b: BaseTransaction) {
+    if (!isAdmin) { setEditBaseReq(b); return; } // no admin → solicitud al administrador
+    // admin → edición directa
+    const curCash = b.cashAmount ?? b.amount;
+    const curBank = b.bankAmount ?? 0;
+    const cashStr = prompt(`Efectivo (actual ${formatCOP(curCash)}):`, String(curCash));
+    if (cashStr === null) return;
+    const bankStr = prompt(`Transferencia (actual ${formatCOP(curBank)}):`, String(curBank));
+    if (bankStr === null) return;
+    const cashAmount = parseInt(cashStr.replace(/\D/g, "") || "0");
+    const bankAmount = parseInt(bankStr.replace(/\D/g, "") || "0");
+    if (cashAmount + bankAmount <= 0) { toast.error("El monto debe ser mayor a cero"); return; }
+    try {
+      await api.editBase(b.id, { cashAmount, bankAmount, amount: cashAmount + bankAmount });
+      toast.success("Movimiento actualizado"); load();
+    } catch (err) { toast.error(String(err)); }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -175,6 +207,41 @@ export default function BasesPage() {
                     <div className="text-[11px] text-muted-foreground">💵 {formatCOP(g.paidCash)} · 🏦 {formatCOP(g.paidBank)}</div>
                   </div>
                 </div>
+                {/* Movimientos individuales con editar / eliminar */}
+                <div className="mt-3 space-y-1.5">
+                  {bases.filter(b => b.driverId === g.driverId)
+                    .sort((a, b) => b.date.localeCompare(a.date))
+                    .map(b => (
+                      <div key={b.id} className="flex items-center justify-between gap-2 rounded-lg bg-background/40 px-3 py-1.5 text-xs">
+                        <div className="min-w-0">
+                          <span className={`font-bold ${b.type === "entrega" ? "text-orange-600" : "text-green-600"}`}>
+                            {b.type === "entrega" ? "📤 Entrega" : "📥 Devolución"} {formatCOP(b.amount)}
+                          </span>
+                          <span className="text-muted-foreground ml-2">
+                            💵 {formatCOP(b.cashAmount ?? b.amount)} · 🏦 {formatCOP(b.bankAmount ?? 0)}
+                          </span>
+                          <span className="text-muted-foreground ml-2">{new Date(b.date + "T12:00:00").toLocaleDateString("es-CO", { day: "2-digit", month: "short" })}</span>
+                          {b.notes && <span className="text-muted-foreground ml-2 truncate">· {b.notes}</span>}
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            onClick={() => handleEditBase(b)}
+                            title={isAdmin ? "Editar" : "Solicitar edición (requiere aprobación del administrador)"}
+                            className="p-1.5 rounded-lg hover:bg-secondary transition text-muted-foreground hover:text-foreground"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteBase(b)}
+                            title={isAdmin ? "Eliminar" : "Solicitar eliminación (requiere aprobación del administrador)"}
+                            className="p-1.5 rounded-lg hover:bg-red-500/10 transition text-muted-foreground hover:text-red-500"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
               </div>
             );
           })}
@@ -224,6 +291,35 @@ export default function BasesPage() {
             </form>
           </div>
         </div>
+      )}
+
+      {/* No admin: solicitud de edición de base */}
+      {editBaseReq && (
+        <EditRequestWizard
+          open={!!editBaseReq}
+          onOpenChange={(v) => { if (!v) setEditBaseReq(null); }}
+          entityType="BaseTransaction"
+          entityId={editBaseReq.id}
+          entityLabel={`${editBaseReq.type === "entrega" ? "Entrega" : "Devolución"} de base — ${formatCOP(editBaseReq.amount)}`}
+          fields={[
+            { field: "cashAmount", label: "💵 Efectivo", currentValue: String(editBaseReq.cashAmount ?? editBaseReq.amount), type: "money" },
+            { field: "bankAmount", label: "🏦 Transferencia", currentValue: String(editBaseReq.bankAmount ?? 0), type: "money" },
+            { field: "notes", label: "Notas", currentValue: editBaseReq.notes ?? "", type: "text" },
+          ] satisfies EditableField[]}
+          onDone={load}
+        />
+      )}
+
+      {/* No admin: solicitud de eliminación de base */}
+      {deleteBaseReq && (
+        <DeleteRequestWizard
+          open={!!deleteBaseReq}
+          onOpenChange={(v) => { if (!v) setDeleteBaseReq(null); }}
+          entityType="BaseTransaction"
+          entityId={deleteBaseReq.id}
+          entityLabel={`${deleteBaseReq.type === "entrega" ? "Entrega" : "Devolución"} de base — ${formatCOP(deleteBaseReq.amount)}`}
+          onDone={load}
+        />
       )}
     </div>
   );
