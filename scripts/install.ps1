@@ -39,9 +39,13 @@ if (-not $svc) {
   Ok "PostgreSQL ya está instalado."
 }
 
-# Esperar a que el servicio quede arriba.
+# Asegurar que PostgreSQL arranque automáticamente con Windows y esté activo ahora.
 $svc = Get-Service postgresql-x64-17 -ErrorAction SilentlyContinue
-if ($svc -and $svc.Status -ne "Running") { Start-Service postgresql-x64-17 }
+if ($svc) {
+  Set-Service -Name postgresql-x64-17 -StartupType Automatic
+  Ok "PostgreSQL configurado como inicio automático."
+  if ($svc.Status -ne "Running") { Start-Service postgresql-x64-17 }
+}
 
 # ---- 2. Localizar psql ----
 $psql = Get-ChildItem 'C:\Program Files\PostgreSQL' -Recurse -Filter psql.exe -ErrorAction SilentlyContinue |
@@ -74,7 +78,24 @@ Step "Instalando la app..."
 Start-Process -FilePath $installer -ArgumentList "/S" -Wait
 Ok "App instalada."
 
-# ---- 6. Regla de firewall (puerto 4000 para acceso remoto vía Tailscale) ----
+# ---- 6. Tarea programada para inicio automático de CashBuddy.exe ----
+Step "Configurando inicio automático de Cash Buddy EPA..."
+$exePath = "C:\EPA DOMICILIOS\cash-buddy-epa\CashBuddy.exe"
+$taskName = "CashBuddyEPA_Autostart"
+$existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+if ($existing) { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false }
+if (Test-Path $exePath) {
+  $action  = New-ScheduledTaskAction -Execute $exePath
+  $trigger = New-ScheduledTaskTrigger -AtLogOn
+  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0
+  Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
+    -Settings $settings -RunLevel Highest -Force | Out-Null
+  Ok "Tarea programada 'CashBuddyEPA_Autostart' creada (inicio al iniciar sesión)."
+} else {
+  Warn "CashBuddy.exe no encontrado en $exePath — tarea no creada."
+}
+
+# ---- 7. Regla de firewall (puerto 4000 para acceso remoto vía Tailscale) ----
 Step "Configurando firewall para acceso remoto (puerto 4000)..."
 $rule = Get-NetFirewallRule -DisplayName "Cash Buddy EPA" -ErrorAction SilentlyContinue
 if (-not $rule) {

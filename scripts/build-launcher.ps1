@@ -29,6 +29,8 @@ $args = @(
   "/win32icon:`"$icon`"",
   "/reference:`"$core`"",
   "/reference:`"$winforms`"",
+  # System.dll trae Microsoft.Win32.Registry y System.Net.WebClient (incluido en .NET 4)
+  "/reference:System.dll",
   "/resource:`"$core`",wv2.Core.dll",
   "/resource:`"$winforms`",wv2.WinForms.dll",
   "/resource:`"$loader`",wv2.Loader.dll",
