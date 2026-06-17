@@ -13,6 +13,7 @@ export interface UnifiedMovement {
   category: string;      // etiqueta legible
   source: string;        // sistema origen
   relatedName?: string;  // nombre de persona/cliente asociado
+  createdByName?: string | null; // usuario que REALIZÓ el movimiento
   entityType: string;    // modelo real para solicitudes de cambio
   entityId: string;      // ID real del registro
   editableDescription: boolean; // si el campo descripción es editable
@@ -96,6 +97,7 @@ export async function getUnifiedMovements(params?: { from?: string; to?: string;
       category: categoryLabel(m.category),
       source: "Caja",
       relatedName: m.worker?.name,
+      createdByName: m.createdByName,
       entityType: "Movement",
       entityId: m.id,
       editableDescription: true,
@@ -116,6 +118,7 @@ export async function getUnifiedMovements(params?: { from?: string; to?: string;
       category: t.type === "ingreso" ? "Ingreso banco" : "Salida banco",
       source: "Banco",
       relatedName: t.driverName ?? t.reference ?? undefined,
+      createdByName: t.createdByName,
       entityType: "BankTransaction",
       entityId: t.id,
       editableDescription: true,
@@ -137,6 +140,7 @@ export async function getUnifiedMovements(params?: { from?: string; to?: string;
       category: esBancoAEfectivo ? "Banco→Efectivo" : "Efectivo→Banco",
       source: "Conversión",
       relatedName: c.driverName ?? c.branch?.name,
+      createdByName: c.userName,
       entityType: "Conversion",
       entityId: c.id,
       editableDescription: false,
@@ -157,6 +161,7 @@ export async function getUnifiedMovements(params?: { from?: string; to?: string;
       category: "Pago comisión",
       source: "Domiciliarios",
       relatedName: p.driver?.name,
+      createdByName: p.createdByName,
       entityType: "DriverPayment",
       entityId: p.id,
       editableDescription: false,
@@ -177,6 +182,7 @@ export async function getUnifiedMovements(params?: { from?: string; to?: string;
       category: b.type === "entrega" ? "Base entregada" : "Base cobrada",
       source: "Bases",
       relatedName: b.driver?.name,
+      createdByName: b.createdByName,
       entityType: "BaseTransaction",
       entityId: b.id,
       editableDescription: false,
@@ -198,6 +204,7 @@ export async function getUnifiedMovements(params?: { from?: string; to?: string;
       category: "Cobro cliente",
       source: "Clientes",
       relatedName: d.client?.name,
+      createdByName: d.paidByName ?? d.createdByName,
       entityType: "ClientDebt",
       entityId: d.id,
       editableDescription: false,

@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, Pencil, Trash2, Wifi, WifiOff, RefreshCw, CheckCircle, XCircle, Clock } from "lucide-react";
+import { Plus, Pencil, Trash2, Wifi, WifiOff, RefreshCw, CheckCircle, XCircle, Clock, PackageCheck } from "lucide-react";
 import { toast } from "sonner";
 import * as api from "@/lib/sd-api";
 import type { Branch } from "@/lib/sd-api";
+import { useAuth } from "@/lib/auth";
 
 export default function SucursalesPage() {
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -12,6 +13,8 @@ export default function SucursalesPage() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Branch | null>(null);
   const [syncing, setSyncing] = useState<string | null>(null);
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
 
   const load = async () => {
     setLoading(true);
@@ -26,6 +29,23 @@ export default function SucursalesPage() {
     try {
       const r = await api.syncBranch(id);
       toast.success(`${name}: ${r.drivers} domiciliarios, ${r.orders} pedidos sincronizados`);
+      load();
+    } catch (err) {
+      toast.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally { setSyncing(null); }
+  };
+
+  const handleStartOrders = async (id: string, name: string) => {
+    if (!confirm(
+      `¿Empezar a cargar pedidos de "${name}" desde HOY?\n\n` +
+      "• Cargará TODOS los pedidos de hoy (desde la primera hora del día).\n" +
+      "• BORRARÁ los pedidos de días anteriores y dejará la deuda en cero.\n" +
+      "• De aquí en adelante el sistema cuenta solo desde hoy.\n\nEsta acción no se puede deshacer."
+    )) return;
+    setSyncing(id);
+    try {
+      const r = await api.startOrdersFromToday(id);
+      toast.success(`${name}: contando desde hoy · ${r.orders} pedidos de hoy cargados`);
       load();
     } catch (err) {
       toast.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
@@ -111,6 +131,24 @@ export default function SucursalesPage() {
 
               {b.syncMessage && b.syncStatus === "error" && (
                 <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{b.syncMessage}</p>
+              )}
+
+              {/* Día de arranque de pedidos */}
+              <p className="text-xs px-3 py-2 rounded-lg bg-secondary/40 text-muted-foreground">
+                📦 {b.ordersSince
+                  ? <>Cargando pedidos desde <strong className="text-foreground">{new Date(b.ordersSince).toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" })}</strong></>
+                  : "Aún no se ha definido el día de arranque de pedidos"}
+              </p>
+
+              {/* Botón "Cargar pedidos desde hoy" — SOLO admin */}
+              {isAdmin && (
+                <button
+                  onClick={() => handleStartOrders(b.id, b.name)}
+                  disabled={syncing === b.id}
+                  className="w-full flex items-center justify-center gap-2 text-sm py-2.5 rounded-xl bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 font-bold hover:bg-emerald-500/20 transition disabled:opacity-50 border border-emerald-500/30"
+                >
+                  <PackageCheck className="h-4 w-4" /> Cargar pedidos desde hoy
+                </button>
               )}
 
               <div className="flex gap-2 pt-1">

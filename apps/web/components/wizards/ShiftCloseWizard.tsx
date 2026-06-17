@@ -37,6 +37,16 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
   const isPM = shift === "PM";
   // Quién cerró la mañana (para asociarlo en la verificación de la tarde)
   const morningPerson = amShift?.receivedBy || amShift?.createdByName || "—";
+  // Turnos YA registrados hoy → se bloquean para no repetirlos.
+  const [doneShifts, setDoneShifts] = useState<Set<string>>(new Set());
+
+  // Al abrir, cargar qué turnos ya están hechos en la fecha seleccionada.
+  useEffect(() => {
+    if (!open || !date) return;
+    api.getShiftsForDate(date)
+      .then(shifts => setDoneShifts(new Set(shifts.map(s => s.shift))))
+      .catch(() => setDoneShifts(new Set()));
+  }, [open, date]);
 
   // Al seleccionar turno:
   //  - MAÑANA: el sistema calcula el efectivo esperado (movimientos del día).
@@ -147,19 +157,26 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
             ["AM", "☀️", "Recibo AM", "La persona de la mañana cierra y deja la caja"],
             ["PM", "🌙", "Recibo PM", "La tarde verifica lo que dejó la mañana"],
             ["close", "🔒", "Cierre final", "Cierre del día contra lo que dice el sistema"],
-          ] as const).map(([s, icon, title, desc]) => (
+          ] as const).map(([s, icon, title, desc]) => {
+            const done = doneShifts.has(s);
+            return (
             <button
               key={s}
-              onClick={() => { setShift(s); setStep(2); }}
-              className="w-full p-4 rounded-2xl border-2 border-border glass hover:border-primary transition flex items-center gap-4"
+              disabled={done}
+              onClick={() => { if (!done) { setShift(s); setStep(2); } }}
+              className={`w-full p-4 rounded-2xl border-2 transition flex items-center gap-4 ${done ? "border-green-500/30 bg-green-500/5 cursor-not-allowed opacity-70" : "border-border glass hover:border-primary"}`}
             >
-              <span className="text-3xl">{icon}</span>
-              <div className="text-left">
+              <span className="text-3xl">{done ? "✅" : icon}</span>
+              <div className="text-left flex-1">
                 <div className="font-bold">{title}</div>
-                <div className="text-xs text-muted-foreground">{desc}</div>
+                <div className="text-xs text-muted-foreground">{done ? "Ya registrado hoy — no se puede repetir" : desc}</div>
               </div>
             </button>
-          ))}
+            );
+          })}
+          {doneShifts.size >= 3 && (
+            <p className="text-center text-sm text-green-600 font-medium pt-2">✅ Todos los turnos del día ya están registrados.</p>
+          )}
         </div>
       )}
 

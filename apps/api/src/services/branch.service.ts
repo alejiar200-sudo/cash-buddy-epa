@@ -162,18 +162,26 @@ export async function syncBranch(id: string): Promise<{ drivers: number; orders:
     const to = todayBogota();
     const fromDate = new Date(to + "T00:00:00.000-05:00");
     fromDate.setDate(fromDate.getDate() - 6);
+    // DÍA DE ARRANQUE: si la sucursal tiene ordersSince, nunca se cargan pedidos
+    // anteriores a esa fecha (el sistema solo cuenta desde el día que se empezó a usar).
+    if (branch.ordersSince && branch.ordersSince > fromDate) {
+      fromDate.setTime(branch.ordersSince.getTime());
+    }
     const from = toBogotaDateStr(fromDate);
 
     const completed = await shipday.getCompletedOrders(apiKey, from, to);
     for (const co of completed) {
       const orderId = String(co.orderId);
+      const deliveredAt = shipday.getCompletedDeliveredAt(co);
+      // Ignorar lo anterior al día de arranque.
+      if (branch.ordersSince && deliveredAt < branch.ordersSince) continue;
       const created = await persistDeliveredOrder(id, orderId, {
         deliveryValue: shipday.getCompletedDeliveryValue(co),
         driverShipdayId: shipday.getCompletedCarrierId(co),
         orderNumber: co.orderNumber ?? null,
         customerName: co.delivery?.name ?? null,
         customerAddress: co.delivery?.address ?? null,
-        deliveredAt: shipday.getCompletedDeliveredAt(co),
+        deliveredAt,
         commissionPercent,
         raw: co as object,
       });
@@ -307,4 +315,47 @@ export async function syncAllBranches() {
     }
   }
   return results;
+}
+
+/**
+ * "Cargar pedidos desde hoy": fija el día de arranque al inicio de HOY (Bogotá),
+ * BORRA los pedidos cargados antes de hoy, recalcula la deuda de cada domiciliario
+ * (cuenta en cero) y sincroniza para traer todos los de hoy. Desde aquí el sistema
+ * solo cuenta de hoy en adelante.
+ */
+export async function startOrdersFromToday(branchId: string) {
+  const branch = await prisma.branch.findUnique({ where: { id: branchId } });
+  if (!branch) throw notFound("Sucursal no encontrada");
+
+  const since = new Date(todayBogota() + "T00:00:00.000-05:00");
+
+  // 1) Borrar pedidos anteriores a hoy y sus estadísticas diarias.
+  await prisma.shipdayOrder.deleteMany({ where: { branchId, deliveredAt: { lt: since } } });
+  await prisma.dailyDriverStat.deleteMany({ where: { branchId, date: { lt: toBogotaDateStr(since) } } });
+
+  // 2) Fijar el día de arranque.
+  await prisma.branch.update({ where: { id: branchId }, data: { ordersSince: since } });
+
+  // 3) Recalcular la deuda de cada domiciliario (cuenta en cero): comisión de los
+  //    pedidos que quedan + saldo de bases − pagos.
+  const drivers = await prisma.driver.findMany({ where: { branchId }, select: { id: true } });
+  for (const d of drivers) {
+    const [ordAgg, baseGiven, basePaid, payAgg] = await Promise.all([
+      prisma.shipdayOrder.aggregate({ where: { driverId: d.id }, _sum: { companyAmount: true } }),
+      prisma.baseTransaction.aggregate({ where: { driverId: d.id, type: "entrega" }, _sum: { amount: true } }),
+      prisma.baseTransaction.aggregate({ where: { driverId: d.id, type: "pago" }, _sum: { amount: true } }),
+      prisma.driverPayment.aggregate({ where: { driverId: d.id }, _sum: { amount: true } }),
+    ]);
+    const net = (ordAgg._sum.companyAmount ?? 0)
+      + (baseGiven._sum.amount ?? 0) - (basePaid._sum.amount ?? 0)
+      - (payAgg._sum.amount ?? 0);
+    await prisma.driver.update({
+      where: { id: d.id },
+      data: { pendingDebt: Math.max(0, net), creditAmount: Math.max(0, -net) },
+    });
+  }
+
+  // 4) Sincronizar para traer todos los pedidos de hoy.
+  const r = await syncBranch(branchId);
+  return { ordersSince: since, ...r };
 }

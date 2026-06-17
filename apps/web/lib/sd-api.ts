@@ -59,6 +59,8 @@ export const syncBranch = (id: string) =>
   apiFetch<{ drivers: number; orders: number }>(`/branches/${id}/sync`, { method: "POST" });
 export const syncAll = () =>
   apiFetch<SyncResult[]>("/branches/sync-all", { method: "POST" });
+export const startOrdersFromToday = (id: string) =>
+  apiFetch<{ ordersSince: string; drivers: number; orders: number }>(`/branches/${id}/start-orders`, { method: "POST" });
 
 // ─── Drivers ─────────────────────────────────────────────────────────────────
 
@@ -294,6 +296,7 @@ export interface UnifiedMovement {
   category: string;
   source: string;
   relatedName?: string;
+  createdByName?: string | null;
   entityType: string;
   entityId: string;
   editableDescription: boolean;
@@ -387,6 +390,7 @@ export interface Branch {
   syncStatus: "ok" | "error" | "never";
   syncMessage?: string;
   lastSyncAt?: string;
+  ordersSince?: string | null;
   createdAt: string;
 }
 

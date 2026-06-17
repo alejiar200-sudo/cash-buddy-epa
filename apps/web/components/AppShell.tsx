@@ -5,13 +5,15 @@ import { Sidebar } from "./Sidebar";
 import { useDay } from "@/lib/day-context";
 import { useStore } from "@/lib/store";
 import { prettyDate, shiftDate, todayISO } from "@/lib/format";
-import { ChevronLeft, ChevronRight, Sunrise, Lock, Menu, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Sunrise, Lock, Menu, X, UserCircle2 } from "lucide-react";
 import { WelcomeWizard } from "./wizards/WelcomeWizard";
 import { TermsGate } from "./TermsGate";
+import { useAuth } from "@/lib/auth";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { date, setDate } = useDay();
   const { state, loading, getDay } = useStore();
+  const { user } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   if (loading) {
@@ -87,6 +89,17 @@ export function AppShell({ children }: { children: ReactNode }) {
             {isToday ? <Sunrise className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
             {isToday ? "Día en curso" : "Día cerrado"}
           </div>
+
+          {/* Usuario en sesión — bien visible (para saber con qué cuenta se está) */}
+          {user && (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/30 shrink-0" title={user.email}>
+              <UserCircle2 className="h-5 w-5 text-primary shrink-0" />
+              <div className="leading-tight min-w-0">
+                <div className="text-sm font-bold truncate max-w-[160px]">{user.name}</div>
+                <div className="text-[10px] text-muted-foreground truncate max-w-[160px]">{user.email}</div>
+              </div>
+            </div>
+          )}
         </header>
 
         <div className="flex-1 p-3 md:p-6">{children}</div>

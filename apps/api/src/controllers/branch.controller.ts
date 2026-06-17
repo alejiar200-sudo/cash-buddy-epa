@@ -34,6 +34,10 @@ export async function syncAll(_req: Request, res: Response) {
   res.json(await svc.syncAllBranches());
 }
 
+export async function startOrders(req: Request, res: Response) {
+  res.json(await svc.startOrdersFromToday(req.params.id));
+}
+
 export async function reconcile(req: Request, res: Response) {
   const { from, to } = req.body as { from?: string; to?: string };
   if (!from || !to) {

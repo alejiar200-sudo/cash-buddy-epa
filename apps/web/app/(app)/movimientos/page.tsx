@@ -172,6 +172,9 @@ export default function MovimientosPage() {
                   {" · "}{m.category}
                   {" · "}{m.medium === "cash" ? "💵 Efectivo" : "🏦 Banco"}
                 </p>
+                <p className="text-[11px] text-muted-foreground/80">
+                  👤 Realizado por: <span className="font-semibold">{m.createdByName ?? "—"}</span>
+                </p>
               </div>
 
               {/* Monto */}

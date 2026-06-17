@@ -220,6 +220,7 @@ model Branch {
   syncStatus  SyncStatus @default(never)
   syncMessage String?
   lastSyncAt  DateTime?
+  ordersSince DateTime?  // Solo se cargan pedidos entregados DESDE esta fecha (día de arranque)
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 
