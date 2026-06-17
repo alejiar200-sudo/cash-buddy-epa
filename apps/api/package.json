@@ -17,7 +17,8 @@
     "recalc-stats": "tsx scripts/recalc-daily-stats.ts",
     "simulate-week": "tsx scripts/simulate-week.ts",
     "simulate-month": "tsx scripts/simulate-month.ts",
-    "simulate-2months": "tsx scripts/simulate-2months.ts"
+    "simulate-2months": "tsx scripts/simulate-2months.ts",
+    "reset-all": "tsx scripts/reset-all.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

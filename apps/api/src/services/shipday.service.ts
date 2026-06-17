@@ -181,6 +181,7 @@ export async function getCompletedOrders(apiKey: string, from: string, to: strin
   const nowIso = new Date().toISOString().slice(0, 19);
   const toEndBogotaUtc = new Date(`${to}T23:59:59.999-05:00`).toISOString().slice(0, 19);
   const endTime = nowIso < toEndBogotaUtc ? nowIso : toEndBogotaUtc;
+  console.log("[shipday/query] from=%s to=%s startTime=%s endTime=%s", from, to, startTime, endTime);
 
   // La consulta devuelve máximo 100 por página → se pagina con cursores.
   const PAGE = 100;
@@ -198,7 +199,10 @@ export async function getCompletedOrders(apiKey: string, from: string, to: strin
         endCursor: (page + 1) * PAGE,
       }),
     });
-    if (!res.ok) throw new Error(`Shipday /orders/query devolvió ${res.status}`);
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Shipday /orders/query devolvió ${res.status}: ${body}`);
+    }
     const data = (await res.json()) as ShipdayCompletedOrder[] | { orders?: ShipdayCompletedOrder[] };
     const batch: ShipdayCompletedOrder[] = Array.isArray(data) ? data : (data.orders ?? []);
     if (batch.length === 0) break;
