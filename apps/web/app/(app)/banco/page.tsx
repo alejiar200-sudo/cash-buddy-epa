@@ -206,26 +206,32 @@ export default function BancoPage() {
                       <Icon className={`h-5 w-5 ${red ? "text-red-500" : cfg.color}`} />
                     </div>
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className={`font-medium text-sm truncate ${red ? "text-red-600 dark:text-red-400" : ""}`}>{m.description}</p>
-                        {hasDriver && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-green-500/20 text-green-700 dark:text-green-400">✓ {m.driverName}</span>}
-                        {!hasDriver && m.noCounterpart && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-green-500/20 text-green-700 dark:text-green-400">✓ Sin contraparte</span>}
+                      {/* DESCRIPCIÓN prominente (no se recorta, se ve completa) */}
+                      <p className={`font-bold text-base leading-snug ${red ? "text-red-600 dark:text-red-400" : "text-foreground"}`}>
+                        {m.description}
+                      </p>
+                      {/* Etiquetas */}
+                      <div className="flex items-center gap-1.5 flex-wrap mt-1">
                         <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${cfg.badge}`}>{cfg.label}</span>
                         {isMixed ? (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-amber-500/20 text-amber-700 dark:text-amber-400">
-                            💵+🏦 Mixto
-                          </span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-amber-500/20 text-amber-700 dark:text-amber-400">💵+🏦 Mixto</span>
                         ) : m.medium && (
                           <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${m.medium === "cash" ? "bg-amber-500/20 text-amber-700 dark:text-amber-400" : "bg-blue-500/20 text-blue-700 dark:text-blue-400"}`}>
                             {m.medium === "cash" ? "💵 Efectivo" : "🏦 Transferencia"}
                           </span>
                         )}
+                        {hasDriver && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-emerald-500/20 text-emerald-700 dark:text-emerald-400">↩️ Deuda de {m.driverName}</span>}
+                        {!hasDriver && m.noCounterpart && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-green-500/20 text-green-700 dark:text-green-400">✓ No necesita contraparte</span>}
+                        {!hasDriver && !m.noCounterpart && !m.pairId && (m.type === "ingreso" || m.type === "egreso") && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-red-500/20 text-red-700 dark:text-red-400">⚠️ Falta contraparte</span>
+                        )}
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        {fmtDate(m.date)}
+                      {/* Historial / detalle del movimiento */}
+                      <p className="text-xs text-muted-foreground mt-1">
+                        🗓️ {fmtDate(m.date)}
                         {isMixed ? ` · 💵 ${formatCOP(m.cashPart ?? 0)} efectivo + 🏦 ${formatCOP(m.bankPart ?? 0)} transferencia` : ""}
                         {!isMixed && m.medium ? ` · ${m.type === "ingreso" || m.type === "consignacion" ? "Entró" : "Salió"} por ${m.medium === "cash" ? "efectivo" : "transferencia"}` : ""}
-                        {m.createdByName ? ` · 👤 ${m.createdByName}` : ""}
+                        {m.createdByName ? ` · 👤 Registró: ${m.createdByName}` : ""}
                         {m.reference ? ` · Ref: ${m.reference}` : ""}{m.branchName ? ` · ${m.branchName}` : ""}
                       </p>
                     </div>

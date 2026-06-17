@@ -13,7 +13,10 @@
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
-    "audit": "tsx scripts/audit.ts"
+    "audit": "tsx scripts/audit.ts",
+    "recalc-stats": "tsx scripts/recalc-daily-stats.ts",
+    "simulate-week": "tsx scripts/simulate-week.ts",
+    "simulate-month": "tsx scripts/simulate-month.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

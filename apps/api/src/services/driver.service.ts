@@ -4,6 +4,10 @@ import { bogotaDayRange, todayBogota } from "../lib/date-range";
 
 const DELIVERED_FILTER = { in: ["DELIVERED", "COMPLETED"] };
 
+function formatCOP(n: number): string {
+  return "$" + Math.round(n).toLocaleString("es-CO");
+}
+
 export async function listDrivers(branchId?: string) {
   const where = branchId ? { branchId } : {};
   return prisma.driver.findMany({
@@ -155,7 +159,11 @@ export async function applyBankToDriver(
       }),
       prisma.bankTransaction.update({
         where: { id: bankTxId },
-        data: { driverId, driverName: driver.name },
+        data: {
+          driverId,
+          driverName: driver.name,
+          description: `${bankTx.description} · Abonado al crédito de ${driver.name} (${formatCOP(amount)})`,
+        },
       }),
     ]);
     return { applied: amount, previousDebt: 0, newDebt: 0, creditAmount: newCredit, creditMedium: medium, excess: newCredit };
@@ -214,9 +222,19 @@ export async function applyBankToDriver(
       },
     });
 
+    // Dejar escrito en la descripción del movimiento QUÉ se descontó y a quién.
+    const partes: string[] = [];
+    if (baseAlloc > 0) partes.push(`base ${formatCOP(baseAlloc)}`);
+    if (commissionAlloc > 0) partes.push(`comisión ${formatCOP(commissionAlloc)}`);
+    const detalle = partes.length ? `: ${partes.join(" + ")}` : "";
+    const sobrante = excess > 0 ? ` · sobrante a crédito ${formatCOP(excess)}` : "";
     await tx.bankTransaction.update({
       where: { id: bankTxId },
-      data: { driverId, driverName: driver.name },
+      data: {
+        driverId,
+        driverName: driver.name,
+        description: `${bankTx.description} · Descontado de la deuda de ${driver.name}${detalle}${sobrante}`,
+      },
     });
   });
 

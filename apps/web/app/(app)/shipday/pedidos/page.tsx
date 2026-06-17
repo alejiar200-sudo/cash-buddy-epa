@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Fragment } from "react";
 import { RefreshCw, Plus, Copy, Webhook, Info, Pencil, Trash2 } from "lucide-react";
 import { ManualOrderWizard } from "@/components/wizards/ManualOrderWizard";
 import { EditRequestWizard, type EditableField } from "@/components/wizards/EditRequestWizard";
@@ -8,70 +8,75 @@ import { DeleteRequestWizard } from "@/components/wizards/DeleteRequestWizard";
 import { toast } from "sonner";
 import * as api from "@/lib/sd-api";
 import type { Order, Branch, Driver } from "@/lib/sd-api";
-import { formatCOP } from "@/lib/format";
+import { formatCOP, prettyDate, todayISO } from "@/lib/format";
 import { LiveBadge } from "@/components/LiveBadge";
 import { useAuth } from "@/lib/auth";
+import { useDay } from "@/lib/day-context";
 
 export default function PedidosPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [branchId, setBranchId] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
   const [loading, setLoading] = useState(true);
   const [showManual, setShowManual] = useState(false);
   const [editOrder, setEditOrder] = useState<Order | null>(null);
   const [deleteOrder, setDeleteOrder] = useState<Order | null>(null);
   const { user } = useAuth();
   const [showWebhook, setShowWebhook] = useState(false);
+  // Día seleccionado en el sistema (flechas de fecha de la cabecera).
+  const { date } = useDay();
+  const isToday = date === todayISO();
+
+  // Trae SOLO los pedidos del día seleccionado (no se sobrecarga).
+  const fetchOrders = (silent = false) => {
+    if (!branchId) return;
+    if (!silent) setLoading(true);
+    api.getOrdersByBranch(branchId, date, date)
+      .then(data => setOrders(prev => JSON.stringify(prev) === JSON.stringify(data) ? prev : data))
+      .catch(() => { if (!silent) toast.error("Error al cargar pedidos"); })
+      .finally(() => { if (!silent) setLoading(false); });
+  };
 
   const load = async () => {
     const [b, d] = await Promise.all([api.getBranches(), api.getDrivers()]);
     setBranches(b);
     setDrivers(d);
-    if (!branchId && b.length > 0) {
-      setBranchId(b[0].id);
-      return;
-    }
+    if (!branchId && b.length > 0) { setBranchId(b[0].id); return; }
     if (!branchId) { setLoading(false); return; }
-    setLoading(true);
-    try {
-      const data = await api.getOrdersByBranch(branchId, from || undefined, to || undefined);
-      setOrders(data);
-    } catch { toast.error("Error al cargar pedidos"); }
-    setLoading(false);
+    // Retroalimentar desde Shipday y luego mostrar el día seleccionado.
+    try { await api.syncAll(); } catch { /* el scheduler ya sincroniza */ }
+    fetchOrders();
   };
 
   useEffect(() => { load(); }, []);
-  useEffect(() => { if (branchId) { setLoading(true); api.getOrdersByBranch(branchId, from || undefined, to || undefined).then(setOrders).catch(() => toast.error("Error")).finally(() => setLoading(false)); } }, [branchId, from, to]);
+  // Al cambiar de día o de sucursal, recargar SOLO ese día.
+  useEffect(() => { fetchOrders(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [branchId, date]);
   useEffect(() => { if (branchId) { api.getDrivers(branchId).then(setDrivers); } }, [branchId]);
 
-  // Refresco en vivo cada 10s (solo orders, sin spinner ni toasts)
+  // Refresco en vivo cada 10s del día seleccionado (silencioso).
   useEffect(() => {
     if (!branchId) return;
-    const t = setInterval(() => {
-      api.getOrdersByBranch(branchId, from || undefined, to || undefined).then(setOrders).catch(() => {});
-    }, 10_000);
+    const t = setInterval(() => fetchOrders(true), 10_000);
     return () => clearInterval(t);
-  }, [branchId, from, to]);
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [branchId, date]);
 
   const totalValue = orders.reduce((s, o) => s + o.deliveryValue, 0);
   const totalCompany = orders.reduce((s, o) => s + o.companyAmount, 0);
   const currentBranch = branches.find(b => b.id === branchId);
 
-  // Orden ascendente por el número real de pedido de Shipday (numérico cuando se puede).
+  // Fecha (día de Bogotá) a la que pertenece el pedido — Shipday reinicia el número
+  // de pedido cada día, así que hay que agrupar por fecha y ordenar por número dentro.
+  const bogotaDay = (iso?: string | null) =>
+    iso ? new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/Bogota" }) : "0000-00-00";
+  const orderNum = (n?: string | null) => { const i = parseInt(n ?? "", 10); return Number.isNaN(i) ? -1 : i; };
+
+  // Día más reciente primero (hoy arriba); dentro de cada día, por número de pedido ascendente.
   const sortedOrders = [...orders].sort((a, b) => {
-    const an = a.orderNumber ?? "";
-    const bn = b.orderNumber ?? "";
-    const ai = parseInt(an, 10);
-    const bi = parseInt(bn, 10);
-    const aIsNum = !Number.isNaN(ai);
-    const bIsNum = !Number.isNaN(bi);
-    if (aIsNum && bIsNum) return ai - bi;
-    if (aIsNum) return -1;
-    if (bIsNum) return 1;
-    return an.localeCompare(bn);
+    const da = bogotaDay(a.deliveredAt), db = bogotaDay(b.deliveredAt);
+    if (da !== db) return db.localeCompare(da); // fecha descendente
+    return orderNum(a.orderNumber) - orderNum(b.orderNumber); // número ascendente
   });
 
   const webhookUrl = typeof window !== "undefined"
@@ -86,7 +91,9 @@ export default function PedidosPage() {
             <h1 className="text-2xl font-black">Pedidos entregados</h1>
             <LiveBadge />
           </div>
-          <p className="text-sm text-muted-foreground">{orders.length} pedidos · {formatCOP(totalValue)} total · {formatCOP(totalCompany)} empresa</p>
+          <p className="text-sm text-muted-foreground capitalize">
+            {isToday ? "Hoy" : prettyDate(date)} · {orders.length} pedidos · {formatCOP(totalValue)} total · {formatCOP(totalCompany)} empresa
+          </p>
         </div>
         <div className="flex gap-2">
           <button onClick={() => setShowWebhook(true)} className="flex items-center gap-2 px-3 py-2 border border-border rounded-xl text-sm hover:bg-secondary transition">
@@ -101,12 +108,13 @@ export default function PedidosPage() {
         </div>
       </div>
 
-      <div className="flex gap-3 flex-wrap">
+      <div className="flex gap-3 flex-wrap items-center">
         <select value={branchId} onChange={e => setBranchId(e.target.value)} className="px-3 py-2 rounded-xl border border-border bg-background text-sm">
           {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
         </select>
-        <input type="date" value={from} onChange={e => setFrom(e.target.value)} className="px-3 py-2 rounded-xl border border-border bg-background text-sm" />
-        <input type="date" value={to} onChange={e => setTo(e.target.value)} className="px-3 py-2 rounded-xl border border-border bg-background text-sm" />
+        <span className="text-xs text-muted-foreground flex items-center gap-1.5 px-3 py-2 rounded-xl bg-secondary/40">
+          📅 Mostrando el día <strong className="capitalize text-foreground">{isToday ? "de hoy" : prettyDate(date)}</strong> — usa las flechas de fecha (arriba) para cambiar de día.
+        </span>
       </div>
 
       {/* Banner informativo sobre webhooks si no hay pedidos */}
@@ -139,8 +147,24 @@ export default function PedidosPage() {
               <tr><td colSpan={8} className="text-center py-12 text-muted-foreground">Cargando...</td></tr>
             ) : sortedOrders.length === 0 ? (
               <tr><td colSpan={8} className="text-center py-12 text-muted-foreground">Sin pedidos — registra uno manualmente o configura el webhook</td></tr>
-            ) : sortedOrders.map(o => (
-              <tr key={o.id} className="border-b border-border/50 hover:bg-secondary/30 transition">
+            ) : sortedOrders.map((o, idx) => {
+              const day = bogotaDay(o.deliveredAt);
+              const prevDay = idx > 0 ? bogotaDay(sortedOrders[idx - 1].deliveredAt) : null;
+              const showHeader = day !== prevDay;
+              const dayLabel = o.deliveredAt
+                ? new Date(o.deliveredAt).toLocaleDateString("es-CO", { timeZone: "America/Bogota", weekday: "long", day: "2-digit", month: "long" })
+                : "Sin fecha";
+              const dayCount = sortedOrders.filter(x => bogotaDay(x.deliveredAt) === day).length;
+              return (
+              <Fragment key={o.id}>
+              {showHeader && (
+                <tr className="bg-secondary/50">
+                  <td colSpan={8} className="px-4 py-2 text-xs font-bold uppercase tracking-wider text-primary capitalize">
+                    {dayLabel} · {dayCount} pedido{dayCount !== 1 ? "s" : ""}
+                  </td>
+                </tr>
+              )}
+              <tr className="border-b border-border/50 hover:bg-secondary/30 transition">
                 <td className="px-4 py-2.5 font-bold tnum">#{o.orderNumber ?? "—"}</td>
                 <td className="px-4 py-2.5 text-muted-foreground">
                   {o.deliveredAt ? new Date(o.deliveredAt).toLocaleString("es-CO", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}
@@ -173,7 +197,8 @@ export default function PedidosPage() {
                   </div>
                 </td>
               </tr>
-            ))}
+              </Fragment>
+            );})}
           </tbody>
         </table>
       </div>

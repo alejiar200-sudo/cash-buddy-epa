@@ -152,6 +152,73 @@ export function getOrderDeliveredAt(order: ShipdayOrder): Date {
   return t ? new Date(t) : new Date();
 }
 
+// ─── Pedidos COMPLETADOS (fuente confiable) ───────────────────────────────────
+// El endpoint POST /orders/query con orderStatus=ALREADY_DELIVERED devuelve los
+// pedidos REALMENTE entregados (la sección "Completados" de Shipday). A diferencia
+// del feed de activos, los cancelados/eliminados NUNCA aparecen aquí, así que no
+// se pueden contar como entregados por error. La estructura es PLANA (distinta del
+// feed de activos), por eso tiene sus propios getters.
+export interface ShipdayCompletedOrder {
+  orderId: number;
+  orderNumber?: string;
+  deliveryFee?: number;
+  orderTotal?: number;
+  incomplete?: boolean;
+  status?: string;
+  deliveryTime?: string | null;
+  carrier?: { id?: number; name?: string } | null;
+  delivery?: { name?: string; address?: string } | null;
+}
+
+export async function getCompletedOrders(apiKey: string, from: string, to: string): Promise<ShipdayCompletedOrder[]> {
+  // IMPORTANTE: Shipday interpreta startTime/endTime como UTC (sin zona horaria).
+  // Si se usa un "23:59:59" fijo del día local, en Colombia (UTC-5) ese límite es
+  // las 6:59pm y se pierden los pedidos entregados en la noche. Por eso:
+  //  - startTime: inicio del día `from` (UTC; cubre de sobra el día en Bogotá).
+  //  - endTime: el FIN del día `to` en Bogotá expresado en UTC, pero TOPADO al
+  //    momento actual (Shipday rechaza endTime en el futuro).
+  const startTime = `${from}T00:00:00`;
+  const nowIso = new Date().toISOString().slice(0, 19);
+  const toEndBogotaUtc = new Date(`${to}T23:59:59.999-05:00`).toISOString().slice(0, 19);
+  const endTime = nowIso < toEndBogotaUtc ? nowIso : toEndBogotaUtc;
+
+  // La consulta devuelve máximo 100 por página → se pagina con cursores.
+  const PAGE = 100;
+  const MAX_PAGES = 100; // tope de seguridad (hasta 10.000 pedidos en el rango)
+  const all: ShipdayCompletedOrder[] = [];
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const res = await fetch(`${BASE_URL}/orders/query`, {
+      method: "POST",
+      headers: { Authorization: `Basic ${apiKey}`, "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        startTime,
+        endTime,
+        orderStatus: "ALREADY_DELIVERED",
+        startCursor: page * PAGE,
+        endCursor: (page + 1) * PAGE,
+      }),
+    });
+    if (!res.ok) throw new Error(`Shipday /orders/query devolvió ${res.status}`);
+    const data = (await res.json()) as ShipdayCompletedOrder[] | { orders?: ShipdayCompletedOrder[] };
+    const batch: ShipdayCompletedOrder[] = Array.isArray(data) ? data : (data.orders ?? []);
+    if (batch.length === 0) break;
+    all.push(...batch);
+    if (batch.length < PAGE) break; // última página parcial
+  }
+  // Solo los realmente entregados y NO marcados como incompletos.
+  return all.filter(o => !o.incomplete && o.deliveryTime);
+}
+
+export function getCompletedDeliveryValue(o: ShipdayCompletedOrder): number {
+  return Math.round(o.deliveryFee ?? o.orderTotal ?? 0);
+}
+export function getCompletedCarrierId(o: ShipdayCompletedOrder): string | null {
+  return o.carrier?.id ? String(o.carrier.id) : null;
+}
+export function getCompletedDeliveredAt(o: ShipdayCompletedOrder): Date {
+  return o.deliveryTime ? new Date(o.deliveryTime) : new Date();
+}
+
 export async function testConnection(apiKey: string): Promise<{ ok: boolean; message: string; driverCount?: number }> {
   try {
     const drivers = await getDrivers(apiKey);

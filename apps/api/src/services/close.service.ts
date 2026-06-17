@@ -32,9 +32,11 @@ export async function getMonthlyReport(month: string, branchId?: string) {
     prisma.movement.aggregate({ where: { category: { in: [16, 18] }, status: "confirmed", date: { startsWith: monthPrefix } }, _sum: { amount: true } }),
     prisma.baseTransaction.aggregate({ where: { ...baseWhere, type: "entrega" }, _sum: { amount: true } }),
     prisma.baseTransaction.aggregate({ where: { ...baseWhere, type: "pago" }, _sum: { amount: true } }),
-    // Excluir movimientos asignados a domiciliario: ya están balanceados contra la deuda/crédito del driver
-    prisma.bankTransaction.aggregate({ where: { type: "ingreso", date: range, driverId: null }, _sum: { amount: true } }),
-    prisma.bankTransaction.aggregate({ where: { type: "egreso", date: range, driverId: null }, _sum: { amount: true } }),
+    // Solo movimientos que NECESITAN contraparte (noCounterpart=false) y AÚN no están
+    // cuadrados (pairId=null). Los marcados "sin contraparte" son correctos y NO entran;
+    // los ya enlazados a su contraparte tampoco. (Se excluyen los asignados a domiciliario.)
+    prisma.bankTransaction.aggregate({ where: { type: "ingreso", date: range, driverId: null, noCounterpart: false, pairId: null }, _sum: { amount: true } }),
+    prisma.bankTransaction.aggregate({ where: { type: "egreso", date: range, driverId: null, noCounterpart: false, pairId: null }, _sum: { amount: true } }),
     prisma.clientDebt.aggregate({ where: { createdAt: range }, _sum: { amount: true } }),
     prisma.clientDebt.aggregate({ where: { paidAt: range }, _sum: { paidAmount: true } }),
     // Saldo de BASE por domiciliario (entrega − pago), NO la deuda total (que incluye comisiones de domicilios)
@@ -85,6 +87,18 @@ export async function getMonthlyReport(month: string, branchId?: string) {
   const debtsGen = debtsGenAgg._sum.amount ?? 0;
   const debtsPaid = debtsPaidAgg._sum.paidAmount ?? 0;
 
+  // Movimientos que necesitan contraparte y aún no se han cuadrado (para el detalle del reporte).
+  const pendingTransferMovs = await prisma.bankTransaction.findMany({
+    where: { date: range, driverId: null, noCounterpart: false, pairId: null },
+    select: { id: true, type: true, amount: true, description: true },
+    orderBy: { date: "desc" }, take: 20,
+  });
+  const transferPendingItems = pendingTransferMovs.map(m => ({
+    id: m.id,
+    name: `${m.type === "ingreso" ? "📥" : "📤"} ${m.description || (m.type === "ingreso" ? "Ingreso" : "Salida")}`,
+    pendingDebt: m.amount,
+  }));
+
   const totalSales = ventasAgg._sum.companyAmount ?? 0;
   const totalExpenses = gastosEf + gastosBk;
   const totalPayroll = nominaEf + nominaBk;
@@ -101,7 +115,7 @@ export async function getMonthlyReport(month: string, branchId?: string) {
     payroll: { cash: nominaEf, bank: nominaBk, total: totalPayroll },
     bases: { given: basesGiven, returned: basesPaid, diff: basesDiff, ok: basesDiff === 0, pendingDrivers: pendingBaseDrivers },
     commission: { pending: commissionPending, ok: commissionPending === 0, pendingDrivers: pendingCommissionDrivers },
-    transfers: { ingresos: bankIng, egresos: bankEgr, diff: transferDiff, ok: transferDiff === 0 },
+    transfers: { ingresos: bankIng, egresos: bankEgr, diff: transferDiff, ok: pendingTransferMovs.length === 0, pendingItems: transferPendingItems },
     clientDebt: { generated: debtsGen, paid: debtsPaid, balance: clientDebtBalance, ok: clientDebtBalance === 0, pendingClients: clientsWithDebt },
     netProfit,
     profitability,

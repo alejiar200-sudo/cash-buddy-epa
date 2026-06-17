@@ -22,7 +22,7 @@ function formatCOP(n: number) {
 
 export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
   const [step, setStep] = useState(1);
-  const [shift, setShift] = useState<"AM" | "PM" | null>(null);
+  const [shift, setShift] = useState<"AM" | "PM" | "close" | null>(null);
   const [receivedBy, setReceivedBy] = useState("");
   const [handedBy, setHandedBy] = useState("");
   const [bills, setBills] = useState<DenomLine[]>(BILLS.map(v => ({ value: v, qty: 0 })));
@@ -60,7 +60,7 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
     api.getExpectedForDate(date)
       .then(r => {
         setAutoExpected({ cash: r.expectedCash, bank: r.expectedBank });
-        if (shift === "AM") setExpectedAmount(r.expectedCash);
+        if (shift === "AM" || shift === "close") setExpectedAmount(r.expectedCash);
       })
       .catch(() => {});
   }, [shift, date]);
@@ -99,7 +99,7 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
         expectedAmount,
         notes: notes || undefined,
       });
-      const label = shift === "AM" ? "Recibo AM" : "Recibo PM";
+      const label = shift === "AM" ? "Recibo AM" : shift === "PM" ? "Recibo PM" : "Cierre final";
       if (isPM) {
         if (difference !== 0) {
           toast.warning(`⚠️ La caja NO está completa: faltante/sobrante de ${formatCOP(Math.abs(difference))}. Hay que rectificar caja.`);
@@ -120,7 +120,7 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
     }
   }
 
-  const shiftLabel = shift === "AM" ? "Recibo AM" : shift === "PM" ? "Recibo PM" : "";
+  const shiftLabel = shift === "AM" ? "Recibo AM" : shift === "PM" ? "Recibo PM" : shift === "close" ? "Cierre final" : "";
 
   const titles = [
     "¿Qué turno vas a registrar?",
@@ -145,7 +145,8 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
         <div className="space-y-3">
           {([
             ["AM", "☀️", "Recibo AM", "La persona de la mañana cierra y deja la caja"],
-            ["PM", "🌙", "Recibo PM", "La tarde verifica lo que dejó la mañana y cierra"],
+            ["PM", "🌙", "Recibo PM", "La tarde verifica lo que dejó la mañana"],
+            ["close", "🔒", "Cierre final", "Cierre del día contra lo que dice el sistema"],
           ] as const).map(([s, icon, title, desc]) => (
             <button
               key={s}

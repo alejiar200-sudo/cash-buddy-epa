@@ -42,7 +42,7 @@ export default function CajaPage() {
 
   const todayShifts = shifts.filter(s => s.date === today);
   const registeredSlots = new Set(todayShifts.map(s => s.shift));
-  const pendingSlots = (["AM", "PM"] as const).filter(s => !registeredSlots.has(s));
+  const pendingSlots = (["AM", "PM", "close"] as const).filter(s => !registeredSlots.has(s));
   const allDone = pendingSlots.length === 0;
   const hasDiscrepancy = todayShifts.some(s => s.difference !== 0);
 
@@ -81,8 +81,8 @@ export default function CajaPage() {
           )}
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          {(["AM", "PM"] as const).map(slot => {
+        <div className="grid grid-cols-3 gap-3">
+          {(["AM", "PM", "close"] as const).map(slot => {
             const s = todayShifts.find(t => t.shift === slot);
             const isVerif = slot === "PM";
             return (
@@ -97,8 +97,8 @@ export default function CajaPage() {
                 }`}
                 onClick={!s ? () => setWizardOpen(true) : undefined}
               >
-                <div className="text-2xl">{slot === "AM" ? "☀️" : "🌙"}</div>
-                <div className="font-bold text-sm mt-1">{slot === "AM" ? "Mañana" : "Tarde"}</div>
+                <div className="text-2xl">{slot === "AM" ? "☀️" : slot === "PM" ? "🌙" : "🔒"}</div>
+                <div className="font-bold text-sm mt-1">{slot === "AM" ? "Mañana" : slot === "PM" ? "Tarde" : "Cierre"}</div>
                 {s ? (
                   <>
                     <div className={`text-xs mt-1 font-bold ${s.difference === 0 ? "text-green-600" : "text-red-500"}`}>
@@ -112,7 +112,7 @@ export default function CajaPage() {
                   </>
                 ) : (
                   <div className="text-xs text-muted-foreground/70 mt-1">
-                    {isVerif ? "Verificar la mañana · clic" : "Pendiente · clic para registrar"}
+                    {isVerif ? "Verificar la mañana · clic" : "Pendiente · clic"}
                   </div>
                 )}
               </div>
@@ -126,7 +126,7 @@ export default function CajaPage() {
             className="mt-4 w-full py-3 bg-primary/10 text-primary rounded-xl text-sm font-bold hover:bg-primary/20 transition flex items-center justify-center gap-2"
           >
             <Clock className="h-4 w-4" />
-            Registrar {pendingSlots.map(s => s === "AM" ? "Mañana" : "Tarde").join(" · ")}
+            Registrar {pendingSlots.map(s => s === "AM" ? "Mañana" : s === "PM" ? "Tarde" : "Cierre").join(" · ")}
           </button>
         )}
       </div>

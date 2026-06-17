@@ -1,5 +1,6 @@
 import { prisma } from "../lib/prisma";
 import { bogotaOpenRange } from "../lib/date-range";
+import { badRequest } from "../lib/errors";
 
 export async function list(params?: { type?: "ingreso" | "egreso"; from?: string; to?: string }) {
   const where: Record<string, unknown> = {};
@@ -30,6 +31,17 @@ export async function create(data: {
   // Marca explícita: este movimiento NO requiere contraparte (es independiente).
   noCounterpart?: boolean;
 }) {
+  // Punto 4 — bloquear montos inválidos (0 o negativos) que falsean los saldos.
+  const cashIn0 = Math.round(data.cashAmount ?? 0);
+  const bankIn0 = Math.round(data.bankAmount ?? 0);
+  const totalIn = (cashIn0 + bankIn0) || Math.round(data.amount ?? 0);
+  if (!Number.isFinite(totalIn) || totalIn <= 0) {
+    throw badRequest("El monto debe ser mayor a 0.");
+  }
+  if (cashIn0 < 0 || bankIn0 < 0) {
+    throw badRequest("Los montos no pueden ser negativos.");
+  }
+
   let driverName: string | undefined;
   if (data.driverId) {
     const driver = await prisma.driver.findUnique({ where: { id: data.driverId } });

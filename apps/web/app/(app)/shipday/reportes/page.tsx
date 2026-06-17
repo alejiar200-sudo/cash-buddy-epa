@@ -194,12 +194,14 @@ function MonthlyReportPanel({ report }: { report: MonthlyReport }) {
           itemHint="Domiciliarios que deben comisión:"
         />
         <BalanceRow
-          label="Diferencia Transferencias"
+          label="Movimientos sin cuadrar (contraparte)"
           ok={report.transfers.ok}
           value={report.transfers.diff}
-          detail={!report.transfers.ok ? `Ingresos banco ${fmt(report.transfers.ingresos)} − Salidas banco ${fmt(report.transfers.egresos)}. Falta registrar la contraparte de algún movimiento.` : undefined}
+          detail={!report.transfers.ok ? "Estos movimientos se marcaron 'con contraparte' pero aún les falta su movimiento espejo para cuadrar." : undefined}
+          items={report.transfers.pendingItems?.map(m => ({ id: m.id, label: m.name, amount: m.pendingDebt }))}
           linkHref="/banco"
           linkLabel="Ir a Banco a cuadrar →"
+          itemHint="Movimientos que necesitan contraparte:"
         />
         <BalanceRow
           label="Saldo Deudas Clientes"

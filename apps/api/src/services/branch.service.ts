@@ -2,7 +2,7 @@ import { prisma } from "../lib/prisma";
 import { encryptApiKey, decryptApiKey, DecryptError } from "../lib/crypto";
 import * as shipday from "./shipday.service";
 import { notFound, conflict } from "../lib/errors";
-import { toBogotaDateStr } from "../lib/date-range";
+import { toBogotaDateStr, todayBogota } from "../lib/date-range";
 
 // ─── Cache de settings (evita 1 query por cada orden sincronizada) ────────────
 let _settingsCache: { shipdayCommission: number } | null = null;
@@ -149,91 +149,36 @@ export async function syncBranch(id: string): Promise<{ drivers: number; orders:
       driversCount++;
     }
 
-    // 2. Pedidos — solo guardamos en BD los DELIVERED/COMPLETED.
-    //    Los activos quedan en caché en memoria; cuando desaparecen del feed,
-    //    asumimos entrega y recién ahí se persiste el pedido + se acumula deuda.
-    const allActiveOrders = await shipday.getAllOrders(apiKey);
+    // 2. Pedidos — se leen los COMPLETADOS reales desde Shipday (POST /orders/query
+    //    con orderStatus=ALREADY_DELIVERED), NO se infiere la entrega por desaparición.
+    //    Los pedidos cancelados/eliminados NO aparecen en "completados", así que no
+    //    se pueden contar como entregados por error. Se persiste cada completado nuevo
+    //    (persistDeliveredOrder ignora los que ya existen) y se acumula la deuda.
     const commissionPercent = await getCachedCommission();
-    const previousActive = activeOrdersByBranch.get(id) ?? new Map<string, ActiveOrderSnapshot>();
-    const nextActive = new Map<string, ActiveOrderSnapshot>();
 
-    // a) Procesar feed actual: separar DELIVERED (persistir) vs activos (cachear).
-    const seenIds = new Set<string>();
-    for (const so of allActiveOrders) {
-      const orderId = String(so.orderId);
-      seenIds.add(orderId);
-      const currentState = so.orderStatus?.orderState ?? "STARTED";
-      const isDelivered = ["DELIVERED", "COMPLETED"].includes(currentState);
+    // Ventana: últimos 7 días (Bogotá). Así, si el sistema estuvo apagado varios
+    // días, al encender reconoce automáticamente los completados que falten y los
+    // añade (la reconciliación diaria es natural: cada sync revisa esta ventana).
+    const to = todayBogota();
+    const fromDate = new Date(to + "T00:00:00.000-05:00");
+    fromDate.setDate(fromDate.getDate() - 6);
+    const from = toBogotaDateStr(fromDate);
 
-      if (isDelivered) {
-        const created = await persistDeliveredOrder(id, orderId, {
-          deliveryValue: shipday.getOrderDeliveryValue(so),
-          driverShipdayId: shipday.getOrderCarrierId(so),
-          orderNumber: so.orderNumber ?? null,
-          customerName: so.customer?.name ?? null,
-          customerAddress: so.customer?.address ?? null,
-          deliveredAt: shipday.getOrderDeliveredAt(so),
-          commissionPercent,
-          raw: so as object,
-        });
-        if (created) ordersCount++;
-      } else {
-        nextActive.set(orderId, {
-          shipdayOrderId: orderId,
-          driverShipdayId: shipday.getOrderCarrierId(so),
-          deliveryValue: shipday.getOrderDeliveryValue(so),
-          orderNumber: so.orderNumber ?? null,
-          customerName: so.customer?.name ?? null,
-          customerAddress: so.customer?.address ?? null,
-          raw: so as object,
-        });
-      }
-    }
-
-    // b) Pedidos que estaban activos en memoria y ya no aparecen → asumir entregados.
-    for (const [orderId, snap] of previousActive) {
-      if (seenIds.has(orderId)) continue;
+    const completed = await shipday.getCompletedOrders(apiKey, from, to);
+    for (const co of completed) {
+      const orderId = String(co.orderId);
       const created = await persistDeliveredOrder(id, orderId, {
-        deliveryValue: snap.deliveryValue,
-        driverShipdayId: snap.driverShipdayId,
-        orderNumber: snap.orderNumber,
-        customerName: snap.customerName,
-        customerAddress: snap.customerAddress,
-        deliveredAt: new Date(),
+        deliveryValue: shipday.getCompletedDeliveryValue(co),
+        driverShipdayId: shipday.getCompletedCarrierId(co),
+        orderNumber: co.orderNumber ?? null,
+        customerName: co.delivery?.name ?? null,
+        customerAddress: co.delivery?.address ?? null,
+        deliveredAt: shipday.getCompletedDeliveredAt(co),
         commissionPercent,
-        raw: snap.raw,
+        raw: co as object,
       });
       if (created) ordersCount++;
     }
-
-    // c) Fallback: pedidos guardados en BD con estado activo (de versiones previas
-    //    o reinicios) que ya no aparecen en el feed → flip a DELIVERED y acumular deuda.
-    const orphanActive = await prisma.shipdayOrder.findMany({
-      where: { branchId: id, status: { in: ["STARTED", "ACCEPTED", "ASSIGNED", "PICKED_UP", "IN_PROGRESS"] } },
-    });
-    for (const dbOrder of orphanActive) {
-      if (seenIds.has(dbOrder.shipdayOrderId)) continue;
-      const now = new Date();
-      await prisma.shipdayOrder.update({
-        where: { id: dbOrder.id },
-        data: { status: "DELIVERED", deliveredAt: now },
-      });
-      if (dbOrder.driverId && dbOrder.companyAmount > 0) {
-        await prisma.driver.update({
-          where: { id: dbOrder.driverId },
-          data: { pendingDebt: { increment: dbOrder.companyAmount } },
-        });
-        const dateStr = toBogotaDateStr(now);
-        await prisma.dailyDriverStat.upsert({
-          where: { date_driverId: { date: dateStr, driverId: dbOrder.driverId } },
-          create: { date: dateStr, branchId: id, driverId: dbOrder.driverId, orderCount: 1, totalValue: dbOrder.deliveryValue, companyTotal: dbOrder.companyAmount },
-          update: { orderCount: { increment: 1 }, totalValue: { increment: dbOrder.deliveryValue }, companyTotal: { increment: dbOrder.companyAmount } },
-        });
-      }
-      ordersCount++;
-    }
-
-    activeOrdersByBranch.set(id, nextActive);
 
     await prisma.branch.update({
       where: { id },
