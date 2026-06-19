@@ -1,5 +1,6 @@
 import { prisma } from "../lib/prisma";
 import { notFound, badRequest } from "../lib/errors";
+import { applyDebtDelta } from "./driver.service";
 
 // Eliminar una base (admin directo): revierte el efecto en la deuda del domiciliario.
 export async function removeBase(id: string) {
@@ -53,15 +54,14 @@ export async function giveBase(driverId: string, input: { cashAmount?: number; b
   const amount = (cashAmount + bankAmount) || Math.round(input.amount ?? 0);
   if (amount <= 0) throw badRequest("El monto debe ser mayor a 0");
 
-  const [tx] = await prisma.$transaction([
-    prisma.baseTransaction.create({
+  const tx = await prisma.$transaction(async (txc) => {
+    const created = await txc.baseTransaction.create({
       data: { driverId, branchId: driver.branchId, amount, cashAmount, bankAmount, type: "entrega", notes: input.notes, createdBy: input.createdBy ?? null, createdByName: input.createdByName ?? null },
-    }),
-    prisma.driver.update({
-      where: { id: driverId },
-      data: { pendingDebt: { increment: amount } },
-    }),
-  ]);
+    });
+    // Entregar base aumenta lo que debe, neteando contra cualquier crédito a favor.
+    await applyDebtDelta(txc, driverId, amount);
+    return created;
+  });
   return tx;
 }
 
@@ -73,15 +73,14 @@ export async function payBase(driverId: string, input: { cashAmount?: number; ba
   const amount = (cashAmount + bankAmount) || Math.round(input.amount ?? 0);
   if (amount <= 0) throw badRequest("El monto debe ser mayor a 0");
 
-  const [tx] = await prisma.$transaction([
-    prisma.baseTransaction.create({
+  const tx = await prisma.$transaction(async (txc) => {
+    const created = await txc.baseTransaction.create({
       data: { driverId, branchId: driver.branchId, amount, cashAmount, bankAmount, type: "pago", notes: input.notes, createdBy: input.createdBy ?? null, createdByName: input.createdByName ?? null },
-    }),
-    prisma.driver.update({
-      where: { id: driverId },
-      data: { pendingDebt: { decrement: amount } },
-    }),
-  ]);
+    });
+    // Devolver base reduce la deuda; si excede, queda como crédito (no deuda negativa).
+    await applyDebtDelta(txc, driverId, -amount);
+    return created;
+  });
   return tx;
 }
 

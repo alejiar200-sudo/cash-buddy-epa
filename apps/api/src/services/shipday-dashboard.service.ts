@@ -2,6 +2,7 @@ import { prisma } from "../lib/prisma";
 import * as bankSvc from "./bank-transaction.service";
 import * as shiftSvc from "./shift-close.service";
 import { bogotaDayRange as dateRange, bogotaMonthRange as monthRange, todayBogota } from "../lib/date-range";
+import { isBankLinkedPaymentNote, isBankLinkedBaseNote } from "../lib/balance-markers";
 
 export async function getDashboardFull(branchId?: string) {
   const today = todayBogota();
@@ -79,8 +80,8 @@ async function getExpectedBalances(today: string, todayRange: { gte: Date; lte: 
     prisma.movement.findMany({ where: { createdAt: cumRange, status: "confirmed" }, select: { type: true, medium: true, amount: true } }),
     prisma.bankTransaction.findMany({ where: { date: cumRange }, select: { type: true, medium: true, amount: true } }),
     prisma.conversion.findMany({ where: { date: cumRange }, select: { type: true, amount: true } }),
-    prisma.driverPayment.findMany({ where: { date: cumRange }, select: { medium: true, amount: true } }),
-    prisma.baseTransaction.findMany({ where: { date: cumRange }, select: { type: true, cashAmount: true, bankAmount: true, amount: true } }),
+    prisma.driverPayment.findMany({ where: { date: cumRange }, select: { medium: true, amount: true, notes: true } }),
+    prisma.baseTransaction.findMany({ where: { date: cumRange }, select: { type: true, cashAmount: true, bankAmount: true, amount: true, notes: true } }),
     prisma.clientDebt.findMany({ where: { paidAt: cumRange }, select: { paidCash: true, paidBank: true } }),
   ]);
 
@@ -101,13 +102,20 @@ async function getExpectedBalances(today: string, todayRange: { gte: Date; lte: 
     if (c.type === "banco_a_efectivo") { baseBank -= c.amount; baseCash += c.amount; }
     else { baseCash -= c.amount; baseBank += c.amount; }
   }
-  // Pagos de comisión de domiciliarios: dinero que entra
+  // Pagos de comisión de domiciliarios: dinero que entra.
+  // EXCEPTO los pagos que son contraparte de un movimiento bancario ya contado
+  // (applyBankToDriver): ese dinero entró por el BankTransaction, contarlo aquí
+  // otra vez infla el saldo (era la causa del doble conteo en banco).
   for (const p of driverPayments) {
+    if (isBankLinkedPaymentNote(p.notes)) continue;
     if (p.medium === "cash") baseCash += p.amount;
     else baseBank += p.amount;
   }
   // Bases: split efectivo/transferencia. Entrega sale, devolución vuelve.
+  // Igual que arriba: las "pago" generadas al descontar de un movimiento bancario
+  // ya están contadas por ese BankTransaction → se excluyen del saldo.
   for (const b of bases) {
+    if (b.type === "pago" && isBankLinkedBaseNote(b.notes)) continue;
     const cash = b.cashAmount || (b.bankAmount ? 0 : b.amount); // fallback a efectivo si no hay split
     const bank = b.bankAmount;
     if (b.type === "entrega") { baseCash -= cash; baseBank -= bank; }

@@ -8,6 +8,44 @@
 
 const BASE_URL = "https://api.shipday.com";
 
+// ─── Limitador de tasa global para la API de Shipday ──────────────────────────
+// Shipday permite como máximo 5 solicitudes por minuto por cuenta. Superarlo
+// devuelve HTTP 400 "rate limit exceeded" y la sincronización falla por completo
+// (los pedidos dejan de cargarse y hay que meterlos a mano). Para cargar pedidos
+// de forma CONSTANTE sin saturar la API, TODA solicitud a Shipday —de cualquier
+// sucursal, sea sync periódico, reconciliación o carga manual— pasa por esta cola,
+// que garantiza como mucho MAX_PER_WINDOW solicitudes por ventana deslizante de 60 s.
+const RATE_WINDOW_MS = 60_000;
+const MAX_PER_WINDOW = 4; // margen por debajo del límite real (5/min) de Shipday
+const callTimestamps: number[] = [];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// Las adquisiciones se encadenan para evitar condiciones de carrera entre
+// solicitudes concurrentes (p. ej. paginación + reconciliación a la vez).
+let acquireChain: Promise<void> = Promise.resolve();
+
+function acquireSlot(): Promise<void> {
+  const run = async () => {
+    for (;;) {
+      const now = Date.now();
+      while (callTimestamps.length && now - callTimestamps[0] >= RATE_WINDOW_MS) {
+        callTimestamps.shift();
+      }
+      if (callTimestamps.length < MAX_PER_WINDOW) {
+        callTimestamps.push(now);
+        return;
+      }
+      // No hay hueco: espera hasta que la solicitud más antigua salga de la ventana.
+      await sleep(RATE_WINDOW_MS - (now - callTimestamps[0]) + 50);
+    }
+  };
+  acquireChain = acquireChain.then(run, run);
+  return acquireChain;
+}
+
 export interface ShipdayDriver {
   id: number;
   name: string;
@@ -55,6 +93,7 @@ export interface ShipdayOrder {
 const DELIVERED_STATES = new Set(["DELIVERED", "COMPLETED", "delivered", "completed"]);
 
 async function shipdayFetch<T>(apiKey: string, path: string): Promise<T> {
+  await acquireSlot();
   const res = await fetch(`${BASE_URL}${path}`, {
     headers: {
       Authorization: `Basic ${apiKey}`,
@@ -188,6 +227,7 @@ export async function getCompletedOrders(apiKey: string, from: string, to: strin
   const MAX_PAGES = 100; // tope de seguridad (hasta 10.000 pedidos en el rango)
   const all: ShipdayCompletedOrder[] = [];
   for (let page = 0; page < MAX_PAGES; page++) {
+    await acquireSlot();
     const res = await fetch(`${BASE_URL}/orders/query`, {
       method: "POST",
       headers: { Authorization: `Basic ${apiKey}`, "Content-Type": "application/json", Accept: "application/json" },

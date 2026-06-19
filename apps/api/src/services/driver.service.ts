@@ -1,6 +1,39 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { badRequest, notFound } from "../lib/errors";
 import { bogotaDayRange, todayBogota } from "../lib/date-range";
+import { BANK_LINKED_PAYMENT_NOTE, bankLinkedBaseNote } from "../lib/balance-markers";
+
+/**
+ * Aplica un cambio en la cuenta de un domiciliario manteniendo SIEMPRE el
+ * invariante de que deuda y crédito NO sean ambos positivos a la vez.
+ *
+ * La verdad única es el neto = pendingDebt − creditAmount:
+ *   delta > 0  → debe más (comisión de un pedido, base entregada)
+ *   delta < 0  → se le debe más / paga (devolución de base, pago)
+ *
+ * Antes, al entrar un pedido se hacía `pendingDebt += comisión` SIN descontar el
+ * crédito que la empresa ya le debía, dejando deuda y crédito positivos al tiempo
+ * (p. ej. "debe 10.000" y a la vez "le debemos 1.000"). Esto netea: si tenía
+ * 1.000 a favor y entra comisión de 10.000 → debe 9.000 (no 10.000 + 1.000 aparte).
+ */
+export async function applyDebtDelta(tx: Prisma.TransactionClient, driverId: string, delta: number): Promise<void> {
+  if (!delta) return;
+  const d = await tx.driver.findUnique({
+    where: { id: driverId },
+    select: { pendingDebt: true, creditAmount: true, creditMedium: true },
+  });
+  if (!d) return;
+  const net = d.pendingDebt - (d.creditAmount ?? 0) + delta;
+  await tx.driver.update({
+    where: { id: driverId },
+    data: {
+      pendingDebt: net > 0 ? net : 0,
+      creditAmount: net < 0 ? -net : 0,
+      creditMedium: net < 0 ? d.creditMedium ?? null : null,
+    },
+  });
+}
 
 const DELIVERED_FILTER = { in: ["DELIVERED", "COMPLETED"] };
 
@@ -200,7 +233,7 @@ export async function applyBankToDriver(
           branchId: driver.branchId,
           amount: baseAlloc,
           type: "pago",
-          notes: `Pago vía banco (${medium === "cash" ? "efectivo" : "transferencia"})`,
+          notes: bankLinkedBaseNote(medium),
           createdBy: actor?.id ?? null,
           createdByName: actor?.name ?? null,
         },
@@ -213,7 +246,7 @@ export async function applyBankToDriver(
           branchId: driver.branchId,
           amount: commissionAlloc,
           medium,
-          notes: "Pago vía movimiento bancario",
+          notes: BANK_LINKED_PAYMENT_NOTE,
           createdBy: actor?.id ?? null,
           createdByName: actor?.name ?? null,
         },

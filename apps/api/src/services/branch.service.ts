@@ -3,11 +3,17 @@ import { encryptApiKey, decryptApiKey, DecryptError } from "../lib/crypto";
 import * as shipday from "./shipday.service";
 import { notFound, conflict } from "../lib/errors";
 import { toBogotaDateStr, todayBogota } from "../lib/date-range";
+import { applyDebtDelta } from "./driver.service";
 
 // ─── Cache de settings (evita 1 query por cada orden sincronizada) ────────────
 let _settingsCache: { shipdayCommission: number } | null = null;
 let _settingsCacheAt = 0;
 const SETTINGS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
+
+// Los domiciliarios cambian poco; no hace falta pedirlos a Shipday cada ciclo
+// (gastaría 1 solicitud/minuto del cupo). Se refrescan como mucho cada 5 minutos.
+const DRIVER_SYNC_TTL_MS = 5 * 60 * 1000;
+const lastDriverSyncAt = new Map<string, number>();
 
 async function getCachedCommission(): Promise<number> {
   const now = Date.now();
@@ -103,7 +109,16 @@ interface ActiveOrderSnapshot {
 }
 const activeOrdersByBranch = new Map<string, Map<string, ActiveOrderSnapshot>>();
 
-export async function syncBranch(id: string): Promise<{ drivers: number; orders: number }> {
+export interface SyncOptions {
+  // Cuántos días hacia atrás (Bogotá) revisar. 0 = solo hoy (sync rápido y liviano,
+  // ~3 solicitudes). El barrido de recuperación usa un valor mayor para no perder
+  // pedidos rezagados o entregados cerca de medianoche. Siempre topado por ordersSince.
+  windowDays?: number;
+  // Forzar refresco de domiciliarios aunque la caché esté vigente.
+  forceDrivers?: boolean;
+}
+
+export async function syncBranch(id: string, opts: SyncOptions = {}): Promise<{ drivers: number; orders: number }> {
   const branch = await prisma.branch.findUnique({ where: { id } });
   if (!branch) throw notFound("Sucursal no encontrada");
 
@@ -126,27 +141,31 @@ export async function syncBranch(id: string): Promise<{ drivers: number; orders:
   let ordersCount = 0;
 
   try {
-    // 1. Sync drivers
-    const shipdayDrivers = await shipday.getDrivers(apiKey);
-    for (const sd of shipdayDrivers) {
-      await prisma.driver.upsert({
-        where: { shipdayDriverId_branchId: { shipdayDriverId: String(sd.id), branchId: id } },
-        create: {
-          shipdayDriverId: String(sd.id),
-          branchId: id,
-          name: sd.name,
-          phone: sd.phoneNumber ?? null,
-          email: sd.email ?? null,
-          active: sd.isActive !== false,
-        },
-        update: {
-          name: sd.name,
-          phone: sd.phoneNumber ?? null,
-          email: sd.email ?? null,
-          active: sd.isActive !== false,
-        },
-      });
-      driversCount++;
+    // 1. Sync drivers (solo si la caché expiró: ahorra 1 solicitud/ciclo del cupo).
+    const driversStale = opts.forceDrivers || Date.now() - (lastDriverSyncAt.get(id) ?? 0) > DRIVER_SYNC_TTL_MS;
+    if (driversStale) {
+      const shipdayDrivers = await shipday.getDrivers(apiKey);
+      for (const sd of shipdayDrivers) {
+        await prisma.driver.upsert({
+          where: { shipdayDriverId_branchId: { shipdayDriverId: String(sd.id), branchId: id } },
+          create: {
+            shipdayDriverId: String(sd.id),
+            branchId: id,
+            name: sd.name,
+            phone: sd.phoneNumber ?? null,
+            email: sd.email ?? null,
+            active: sd.isActive !== false,
+          },
+          update: {
+            name: sd.name,
+            phone: sd.phoneNumber ?? null,
+            email: sd.email ?? null,
+            active: sd.isActive !== false,
+          },
+        });
+        driversCount++;
+      }
+      lastDriverSyncAt.set(id, Date.now());
     }
 
     // 2. Pedidos — se leen los COMPLETADOS reales desde Shipday (POST /orders/query
@@ -156,12 +175,15 @@ export async function syncBranch(id: string): Promise<{ drivers: number; orders:
     //    (persistDeliveredOrder ignora los que ya existen) y se acumula la deuda.
     const commissionPercent = await getCachedCommission();
 
-    // Ventana: últimos 7 días (Bogotá). Así, si el sistema estuvo apagado varios
-    // días, al encender reconoce automáticamente los completados que falten y los
-    // añade (la reconciliación diaria es natural: cada sync revisa esta ventana).
+    // Ventana de consulta. El sync rápido usa solo HOY (windowDays=0): así cada
+    // ciclo pide pocas páginas (~3) y no crece sin límite con el paso de los días
+    // —que era la causa de fondo del "rate limit exceeded". El barrido de
+    // recuperación periódico usa una ventana mayor para reconocer cualquier pedido
+    // rezagado o entregado cerca de medianoche, sin perder ninguno.
+    const windowDays = Math.max(0, opts.windowDays ?? 0);
     const to = todayBogota();
     const fromDate = new Date(to + "T00:00:00.000-05:00");
-    fromDate.setDate(fromDate.getDate() - 6);
+    fromDate.setDate(fromDate.getDate() - windowDays);
     // DÍA DE ARRANQUE: si la sucursal tiene ordersSince, nunca se cargan pedidos
     // anteriores a esa fecha (el sistema solo cuenta desde el día que se empezó a usar).
     if (branch.ordersSince && branch.ordersSince > fromDate) {
@@ -248,10 +270,8 @@ async function persistDeliveredOrder(branchId: string, shipdayOrderId: string, p
     });
 
     if (driverId && companyAmount > 0) {
-      await tx.driver.update({
-        where: { id: driverId },
-        data: { pendingDebt: { increment: companyAmount } },
-      });
+      // Netea contra el crédito existente (no apila deuda y crédito a la vez).
+      await applyDebtDelta(tx, driverId, companyAmount);
       await tx.dailyDriverStat.upsert({
         where: { date_driverId: { date: dateStr, driverId } },
         create: { date: dateStr, branchId, driverId, orderCount: 1, totalValue: p.deliveryValue, companyTotal: companyAmount },
@@ -303,15 +323,15 @@ export async function reconcileBranch(id: string, from: string, to: string): Pro
   return { checked: delivered.length, created };
 }
 
-export async function syncAllBranches() {
+export async function syncAllBranches(opts: SyncOptions = {}) {
   const branches = await prisma.branch.findMany({ where: { active: true } });
   const results = [];
   for (const b of branches) {
     try {
-      const r = await syncBranch(b.id);
+      const r = await syncBranch(b.id, opts);
       results.push({ branchId: b.id, name: b.name, ...r, ok: true });
     } catch (err) {
-      results.push({ branchId: b.id, name: b.name, ok: false, error: String(err) });
+      results.push({ branchId: b.id, name: b.name, ok: false, error: err instanceof Error ? err.message : String(err) });
     }
   }
   return results;

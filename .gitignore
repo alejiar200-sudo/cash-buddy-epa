@@ -36,6 +36,10 @@ apps/api/.encryption-key
 .cashbuddy-app-profile/
 cashbuddy-launcher.log
 
+# Respaldos de base de datos (contienen API Key cifrada, hashes y datos sensibles)
+backups/
+*.sql
+
 # Editor
 .vscode/*
 !.vscode/extensions.json

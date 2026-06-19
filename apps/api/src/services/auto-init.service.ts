@@ -2,7 +2,7 @@
 // 1) Si el esquema no existe, aplica la migración SQL de Prisma.
 // 2) Si no hay settings, los crea con valores por defecto.
 // 3) Si no hay usuarios, crea el admin con ADMIN_EMAIL/ADMIN_PASSWORD del .env.
-// 4) Si no hay trabajadores, crea los domiciliarios por defecto.
+// (Ya NO se siembran trabajadores por defecto: los domiciliarios vienen de Shipday.)
 // Idempotente: seguro de ejecutar en cada arranque.
 
 import fs from "node:fs";
@@ -10,17 +10,6 @@ import path from "node:path";
 import bcrypt from "bcryptjs";
 import { prisma } from "../lib/prisma";
 import { env } from "../config/env";
-
-const PALETTE = [
-  "#00E676", "#00B0FF", "#FFB300", "#FF7043", "#AB47BC",
-  "#26C6DA", "#EC407A", "#9CCC65", "#FFCA28", "#5C6BC0",
-  "#FF5252", "#66BB6A", "#42A5F5", "#FFA726",
-];
-
-const DEFAULT_WORKERS = [
-  "Norberto", "Yirelmi", "Zenider", "Luis", "Pablo", "Edgar", "Andrey",
-  "Eliecer", "Miguel", "Yanca", "Eduardo", "Alejandro", "Moisés", "Victor",
-];
 
 function findMigrationSql(): string | null {
   // En el .exe: resources/api/prisma/migrations/<ts>_init/migration.sql
@@ -101,19 +90,9 @@ export async function autoInit(): Promise<void> {
       console.log(`[init] ✓ Admin creado: ${env.admin.email}`);
     }
 
-    // Domiciliarios por defecto
-    const workerCount = await prisma.worker.count();
-    if (workerCount === 0) {
-      await prisma.worker.createMany({
-        data: DEFAULT_WORKERS.map((name, i) => ({
-          name,
-          role: "domiciliario" as const,
-          active: true,
-          color: PALETTE[i % PALETTE.length],
-        })),
-      });
-      console.log(`[init] ✓ ${DEFAULT_WORKERS.length} domiciliarios creados`);
-    }
+    // NOTA: ya NO se siembran trabajadores por defecto. Los domiciliarios reales
+    // se cargan desde Shipday (modelo Driver, apartado "Domiciliarios"). La tabla
+    // Worker ("Trabajadores") queda vacía y solo se llena con lo que cree la sede.
   } catch (err) {
     console.error("[init] Error en auto-inicialización:", err);
     throw err;

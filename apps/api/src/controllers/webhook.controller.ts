@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { prisma } from "../lib/prisma";
 import { toBogotaDateStr } from "../lib/date-range";
+import { applyDebtDelta } from "../services/driver.service";
 
 const DELIVERED_STATUSES = new Set(["DELIVERED", "COMPLETED", "Delivered", "Completed"]);
 
@@ -62,12 +63,12 @@ export async function shipdayWebhook(req: Request, res: Response) {
         customerAddress: String(customer.address ?? ""),
         status: statusRaw,
         deliveredAt: activityLog.deliveryTime ? new Date(String(activityLog.deliveryTime)) : new Date(),
-        rawData: o,
+        rawData: o as object,
       },
     });
 
     if (driverId && companyAmount > 0) {
-      await prisma.driver.update({ where: { id: driverId }, data: { pendingDebt: { increment: companyAmount } } });
+      await applyDebtDelta(prisma, driverId, companyAmount);
       const dateStr = toBogotaDateStr(order.deliveredAt ?? new Date());
       await prisma.dailyDriverStat.upsert({
         where: { date_driverId: { date: dateStr, driverId } },

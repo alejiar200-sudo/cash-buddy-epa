@@ -26,12 +26,15 @@ export async function testConnection(req: Request, res: Response) {
   res.json(await svc.testBranchConnection(req.params.id));
 }
 
+// Sync manual (admin): barrido amplio (últimos 7 días) y refresca domiciliarios,
+// para recuperar de inmediato cualquier pedido que faltara. El limitador de tasa
+// lo espacia solo si hace falta, sin riesgo de saturar Shipday.
 export async function sync(req: Request, res: Response) {
-  res.json(await svc.syncBranch(req.params.id));
+  res.json(await svc.syncBranch(req.params.id, { windowDays: 7, forceDrivers: true }));
 }
 
 export async function syncAll(_req: Request, res: Response) {
-  res.json(await svc.syncAllBranches());
+  res.json(await svc.syncAllBranches({ windowDays: 7, forceDrivers: true }));
 }
 
 export async function startOrders(req: Request, res: Response) {
