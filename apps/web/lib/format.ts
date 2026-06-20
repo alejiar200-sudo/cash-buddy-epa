@@ -14,6 +14,17 @@ export function todayISO(): string {
   return local.toISOString().slice(0, 10);
 }
 
+/**
+ * "YYYY-MM-DD" del día calendario en Bogotá, SIN depender de la zona horaria del
+ * navegador/equipo. Debe usarse para "hoy" en cierres de caja: con UTC puro
+ * (`toISOString().slice(0,10)`) un turno hecho de noche (después de las 19:00 en
+ * Bogotá) caía en el día siguiente y dejaba el cierre archivado en la fecha
+ * equivocada (turnos "pendientes" fantasma). Igual que el backend (date-range.ts).
+ */
+export function todayBogota(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+}
+
 export function shiftDate(iso: string, days: number): string {
   const d = new Date(iso + "T00:00:00");
   d.setDate(d.getDate() + days);

@@ -10,10 +10,13 @@ import { EditRequestWizard, type EditableField } from "@/components/wizards/Edit
 import { DeleteRequestWizard } from "@/components/wizards/DeleteRequestWizard";
 import { useLive } from "@/lib/use-live";
 import { useAuth } from "@/lib/auth";
+import { todayBogota } from "@/lib/format";
 import { Pencil, Trash2 } from "lucide-react";
 
 function formatCOP(n: number) { return "$" + n.toLocaleString("es-CO"); }
-function todayStr() { return new Date().toISOString().slice(0, 10); }
+// "Hoy" SIEMPRE en hora de Bogotá. Con UTC, un cierre hecho de noche se archivaba
+// en el día siguiente y aparecían turnos "pendientes" que no correspondían.
+function todayStr() { return todayBogota(); }
 
 function fmtDay(date: string) {
   return new Date(date + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "2-digit", month: "long" });
@@ -57,7 +60,9 @@ export default function CajaPage() {
   const registeredSlots = new Set(todayShifts.map(s => s.shift));
   const pendingSlots = (["AM", "PM", "close"] as const).filter(s => !registeredSlots.has(s));
   const allDone = pendingSlots.length === 0;
-  const hasDiscrepancy = todayShifts.some(s => s.difference !== 0);
+  // Un turno está descuadrado si falla el efectivo O el banco (cuando se verificó).
+  const shiftOff = (s: ShiftClose) => s.difference !== 0 || (s.bankDifference != null && s.bankDifference !== 0);
+  const hasDiscrepancy = todayShifts.some(shiftOff);
 
   const groupedByDate = shifts.reduce((acc, s) => {
     if (!acc[s.date]) acc[s.date] = [];
@@ -103,7 +108,7 @@ export default function CajaPage() {
                 key={slot}
                 className={`rounded-2xl p-4 text-center cursor-pointer transition hover:opacity-80 ${
                   s
-                    ? s.difference === 0
+                    ? !shiftOff(s)
                       ? "bg-green-500/10 border border-green-500/20"
                       : "bg-red-500/10 border border-red-500/30"
                     : "bg-secondary/40 border border-dashed border-border"
@@ -117,8 +122,13 @@ export default function CajaPage() {
                     <div className={`text-xs mt-1 font-bold ${s.difference === 0 ? "text-green-600" : "text-red-500"}`}>
                       {isVerif
                         ? (s.difference === 0 ? "✓ Caja completa" : "⚠️ Rectificar caja")
-                        : (s.difference === 0 ? "✓ Cuadrado" : `${s.difference > 0 ? "+" : ""}${formatCOP(s.difference)}`)}
+                        : (s.difference === 0 ? "✓ Efectivo" : `💵 ${s.difference > 0 ? "+" : ""}${formatCOP(s.difference)}`)}
                     </div>
+                    {s.bankDifference != null && (
+                      <div className={`text-xs font-bold ${s.bankDifference === 0 ? "text-green-600" : "text-red-500"}`}>
+                        {s.bankDifference === 0 ? "✓ Banco" : `🏦 ${s.bankDifference > 0 ? "+" : ""}${formatCOP(s.bankDifference)}`}
+                      </div>
+                    )}
                     <div className="text-xs text-muted-foreground mt-0.5 font-bold tnum">{formatCOP(s.totalCounted)}</div>
                     {s.createdByName && <div className="text-[10px] text-muted-foreground truncate mt-0.5">por {s.createdByName}</div>}
                     {isVerif && s.handedBy && <div className="text-[10px] text-muted-foreground truncate">verifica a {s.handedBy}</div>}
@@ -160,7 +170,7 @@ export default function CajaPage() {
                   {dayShifts.map(s => (
                     <div key={s.id} className="flex items-center justify-between p-3 rounded-xl bg-secondary/30">
                       <div className="flex items-center gap-3">
-                        {s.difference === 0
+                        {!shiftOff(s)
                           ? <CheckCircle2 className="h-4 w-4 text-green-600" />
                           : <AlertTriangle className="h-4 w-4 text-amber-500" />}
                         <div>
@@ -177,10 +187,15 @@ export default function CajaPage() {
                           <p className="font-bold tnum">{formatCOP(s.totalCounted)}</p>
                           {s.difference !== 0 && (
                             <p className={`text-xs font-bold ${s.difference > 0 ? "text-green-600" : "text-red-500"}`}>
-                              {s.difference > 0 ? "+" : ""}{formatCOP(s.difference)}
+                              💵 {s.difference > 0 ? "+" : ""}{formatCOP(s.difference)}
                             </p>
                           )}
-                          {s.difference === 0 && <p className="text-xs text-green-600">cuadrado</p>}
+                          {s.bankDifference != null && s.bankDifference !== 0 && (
+                            <p className={`text-xs font-bold ${s.bankDifference > 0 ? "text-green-600" : "text-red-500"}`}>
+                              🏦 {s.bankDifference > 0 ? "+" : ""}{formatCOP(s.bankDifference)}
+                            </p>
+                          )}
+                          {!shiftOff(s) && <p className="text-xs text-green-600">cuadrado</p>}
                         </div>
                         <button
                           onClick={() => setEditShift(s)}

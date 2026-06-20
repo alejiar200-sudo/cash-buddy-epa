@@ -27,12 +27,23 @@ export async function registerShift(data: {
   handedBy?: string;
   denominations: Denominations;
   expectedAmount: number;
+  // Conciliación de banco (opcional). bankCounted = saldo real que ingresa el
+  // operador; bankExpected lo decide el SERVIDOR (igual que el efectivo) para que
+  // no se pueda alterar. Si bankCounted no viene, no se concilia banco (queda null).
+  bankCounted?: number | null;
+  bankExpected?: number | null;
   notes?: string;
   createdBy?: string | null;
   createdByName?: string | null;
 }) {
   const totalCounted = sumDenominations(data.denominations);
   const difference = totalCounted - data.expectedAmount;
+
+  // Banco: solo se concilia si el operador ingresó un saldo real (bankCounted).
+  const hasBank = data.bankCounted != null;
+  const bankExpected = hasBank ? Math.round(data.bankExpected ?? 0) : null;
+  const bankCounted = hasBank ? Math.round(data.bankCounted!) : null;
+  const bankDifference = hasBank ? (bankCounted! - (bankExpected ?? 0)) : null;
 
   // #9 — Un cierre ya registrado queda bloqueado. Para corregirlo hay que pasar por
   // el flujo de EditRequest (autorización administrativa), no sobrescribirlo aquí.
@@ -55,6 +66,9 @@ export async function registerShift(data: {
       totalCounted,
       totalExpected: data.expectedAmount,
       difference,
+      bankCounted,
+      bankExpected,
+      bankDifference,
       notes: data.notes,
       closedAt: new Date(),
       locked: true,
@@ -68,6 +82,9 @@ export async function registerShift(data: {
       totalCounted,
       totalExpected: data.expectedAmount,
       difference,
+      bankCounted,
+      bankExpected,
+      bankDifference,
       notes: data.notes,
       createdBy: data.createdBy ?? null,
       createdByName: data.createdByName ?? null,

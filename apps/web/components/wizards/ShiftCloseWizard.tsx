@@ -29,12 +29,16 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
   const [coins, setCoins] = useState<DenomLine[]>(COINS.map(v => ({ value: v, qty: 0 })));
   const [expectedAmount, setExpectedAmount] = useState(0);
   const [autoExpected, setAutoExpected] = useState<{ cash: number; bank: number } | null>(null);
+  // Saldo REAL del banco que ingresa el operador (para detectar descuadres de banco).
+  // Solo se pide en turnos que no son la verificación de la tarde (AM y Cierre).
+  const [bankCounted, setBankCounted] = useState<number | "">("");
   // Turno de la mañana (para que la TARDE verifique lo que dejó la mañana)
   const [amShift, setAmShift] = useState<api.ShiftClose | null>(null);
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
 
   const isPM = shift === "PM";
+  const isClose = shift === "close";
   // Quién cerró la mañana (para asociarlo en la verificación de la tarde)
   const morningPerson = amShift?.receivedBy || amShift?.createdByName || "—";
   // Turnos YA registrados hoy → se bloquean para no repetirlos.
@@ -55,6 +59,7 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
   useEffect(() => {
     if (!shift || !date) return;
     setAmShift(null);
+    setBankCounted(""); // evitar arrastrar un saldo de banco de otro turno
     api.getShiftsForDate(date).then(shifts => {
       const am = shifts.find(s => s.shift === "AM") ?? null;
       if (shift === "PM") {
@@ -80,6 +85,12 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
   const totalCounted = totalBills + totalCoins;
   const difference = totalCounted - expectedAmount;
 
+  // Banco: solo se concilia en AM y Cierre (no en la verificación PM).
+  const verifiesBank = shift === "AM" || shift === "close";
+  const bankExpected = autoExpected?.bank ?? 0;
+  const bankProvided = bankCounted !== "";
+  const bankDifference = bankProvided ? (bankCounted as number) - bankExpected : 0;
+
   function updateBill(value: number, qty: number) {
     setBills(prev => prev.map(b => b.value === value ? { ...b, qty: Math.max(0, qty) } : b));
   }
@@ -92,6 +103,7 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
     setBills(BILLS.map(v => ({ value: v, qty: 0 })));
     setCoins(COINS.map(v => ({ value: v, qty: 0 })));
     setExpectedAmount(0); setAutoExpected(null); setAmShift(null); setNotes("");
+    setBankCounted("");
   }
 
   function close() { onOpenChange(false); setTimeout(reset, 250); }
@@ -107,19 +119,26 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
         handedBy: handedBy || undefined,
         denominations: { bills: bills.filter(b => b.qty > 0), coins: coins.filter(c => c.qty > 0) },
         expectedAmount,
+        // Solo AM y Cierre concilian banco; en PM no se envía.
+        bankCounted: verifiesBank && bankProvided ? (bankCounted as number) : null,
         notes: notes || undefined,
       });
       const label = shift === "AM" ? "Recibo AM" : shift === "PM" ? "Recibo PM" : "Cierre final";
+      const bankOff = verifiesBank && bankProvided && bankDifference !== 0;
       if (isPM) {
         if (difference !== 0) {
           toast.warning(`⚠️ La caja NO está completa: faltante/sobrante de ${formatCOP(Math.abs(difference))}. Hay que rectificar caja.`);
         } else {
           toast.success(`✅ Verificado: ${morningPerson} dejó la caja completa. Recibo PM cerrado.`);
         }
-      } else if (difference !== 0) {
-        toast.warning(`⚠️ ${label} registrado con descuadre de ${formatCOP(Math.abs(difference))}`);
+      } else if (difference !== 0 || bankOff) {
+        const partes = [
+          difference !== 0 ? `efectivo ${formatCOP(Math.abs(difference))}` : null,
+          bankOff ? `banco ${formatCOP(Math.abs(bankDifference))}` : null,
+        ].filter(Boolean).join(" · ");
+        toast.warning(`⚠️ ${label} registrado con descuadre — ${partes}`);
       } else {
-        toast.success(`✅ ${label} registrado — cuadre perfecto`);
+        toast.success(`✅ ${label} registrado — cuadre perfecto (efectivo y banco)`);
       }
       onDone?.();
       close();
@@ -134,10 +153,10 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
 
   const titles = [
     "¿Qué turno vas a registrar?",
-    isPM ? "¿Quién recibe (tarde)?" : "¿Quién entrega y quién recibe?",
+    isPM ? "¿Quién recibe (tarde)?" : isClose ? "¿Quién cierra el día?" : "¿Quién entrega y quién recibe?",
     "Conteo de billetes",
     "Conteo de monedas",
-    isPM ? "Verificación de la mañana" : "Monto esperado en caja",
+    isPM ? "Verificación de la mañana" : "Efectivo esperado y saldo de banco",
     "Resumen del turno",
   ];
 
@@ -195,24 +214,29 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
             </div>
           )}
           <div className="space-y-2">
-            <label className="text-sm font-medium text-muted-foreground">{isPM ? "Persona que recibe (turno tarde)" : "Persona que recibe el turno"}</label>
+            <label className="text-sm font-medium text-muted-foreground">
+              {isPM ? "Persona que recibe (turno tarde)" : isClose ? "¿Quién cierra el día?" : "Persona que recibe el turno"}
+            </label>
             <input
               autoFocus
               value={receivedBy}
               onChange={(e) => setReceivedBy(e.target.value)}
-              placeholder="Nombre de quien recibe"
+              placeholder={isClose ? "Nombre de quien cierra" : "Nombre de quien recibe"}
               className="w-full glass-strong rounded-2xl px-5 py-3 text-base outline-none focus:ring-2 focus:ring-primary/40"
             />
           </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-muted-foreground">{isPM ? "Entregó (mañana)" : "Persona que entrega el turno"}</label>
-            <input
-              value={handedBy}
-              onChange={(e) => setHandedBy(e.target.value)}
-              placeholder={isPM ? "Quien cerró la mañana" : "Nombre de quien entrega (opcional)"}
-              className="w-full glass-strong rounded-2xl px-5 py-3 text-base outline-none focus:ring-2 focus:ring-primary/40"
-            />
-          </div>
+          {/* El Cierre final solo lo hace quien cierra: no hay entrega/recibe (obsoleto). */}
+          {!isClose && (
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-muted-foreground">{isPM ? "Entregó (mañana)" : "Persona que entrega el turno"}</label>
+              <input
+                value={handedBy}
+                onChange={(e) => setHandedBy(e.target.value)}
+                placeholder={isPM ? "Quien cerró la mañana" : "Nombre de quien entrega (opcional)"}
+                className="w-full glass-strong rounded-2xl px-5 py-3 text-base outline-none focus:ring-2 focus:ring-primary/40"
+              />
+            </div>
+          )}
           <button
             disabled={!receivedBy.trim() || (isPM && !amShift)}
             onClick={() => setStep(3)}
@@ -315,25 +339,47 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
             /* MAÑANA = efectivo/banco esperado calculado por el sistema (no editable) */
             <>
               <p className="text-sm text-muted-foreground">
-                Estos valores los calcula el sistema y <strong>no se pueden modificar</strong>. Solo verifica contra lo que contaste.
+                El <strong>efectivo esperado</strong> lo calcula el sistema y no se puede modificar. Para el <strong>banco</strong>, escribe el saldo real que tienes para detectar descuadres.
               </p>
               {autoExpected ? (
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="glass-strong rounded-2xl p-5 text-center border border-primary/20">
-                    <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">💵 Efectivo esperado <span title="Calculado por el sistema, no editable">🔒</span></div>
-                    <div className="text-2xl font-black tnum text-primary mt-1">{formatCOP(autoExpected.cash)}</div>
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="glass-strong rounded-2xl p-5 text-center border border-primary/20">
+                      <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">💵 Efectivo esperado <span title="Calculado por el sistema, no editable">🔒</span></div>
+                      <div className="text-2xl font-black tnum text-primary mt-1">{formatCOP(autoExpected.cash)}</div>
+                    </div>
+                    <div className="glass-strong rounded-2xl p-5 text-center border border-border">
+                      <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">🏦 Banco esperado <span title="Calculado por el sistema, no editable">🔒</span></div>
+                      <div className="text-2xl font-black tnum mt-1">{formatCOP(autoExpected.bank)}</div>
+                    </div>
                   </div>
-                  <div className="glass-strong rounded-2xl p-5 text-center border border-border">
-                    <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">🏦 Banco esperado <span title="Calculado por el sistema, no editable">🔒</span></div>
-                    <div className="text-2xl font-black tnum mt-1">{formatCOP(autoExpected.bank)}</div>
+                  {/* Saldo REAL del banco que ingresa el operador → detecta descuadres */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-muted-foreground flex items-center gap-1">🏦 Saldo real en el banco (lo que ves en la cuenta)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      inputMode="numeric"
+                      value={bankCounted}
+                      onChange={(e) => setBankCounted(e.target.value === "" ? "" : Math.max(0, parseInt(e.target.value) || 0))}
+                      placeholder="Escribe el saldo real del banco"
+                      className="w-full glass-strong rounded-2xl px-5 py-3 text-lg font-bold tnum outline-none focus:ring-2 focus:ring-primary/40"
+                    />
+                    {bankProvided && (
+                      <div className={`rounded-2xl p-3 text-center font-bold text-sm ${bankDifference === 0 ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"}`}>
+                        {bankDifference === 0
+                          ? "✅ Banco cuadrado"
+                          : `⚠️ Descuadre en banco: ${bankDifference > 0 ? "sobran" : "faltan"} ${formatCOP(Math.abs(bankDifference))}`}
+                      </div>
+                    )}
                   </div>
-                </div>
+                </>
               ) : (
                 <div className="glass rounded-2xl p-4 text-center text-sm text-muted-foreground">Calculando valores esperados del sistema…</div>
               )}
               <div className="glass rounded-xl px-4 py-2.5 text-xs text-muted-foreground flex items-start gap-2">
                 <span>🔒</span>
-                <span>El efectivo y el banco esperado se obtienen automáticamente de los movimientos del sistema. Ningún trabajador puede cambiarlos.</span>
+                <span>El efectivo y el banco esperado los calcula el sistema. Tú solo confirmas el conteo de efectivo y escribes el saldo real del banco.</span>
               </div>
             </>
           )}
@@ -349,10 +395,14 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
           </div>
           <button
             onClick={() => setStep(6)}
-            disabled={!isPM && !autoExpected}
+            disabled={(!isPM && !autoExpected) || (verifiesBank && !bankProvided)}
             className="w-full bg-primary text-primary-foreground font-bold py-4 rounded-2xl shadow-cash disabled:opacity-40"
           >
-            {(isPM || autoExpected) ? "Ver resumen →" : "Cargando valor del sistema…"}
+            {!isPM && !autoExpected
+              ? "Cargando valor del sistema…"
+              : verifiesBank && !bankProvided
+                ? "Escribe el saldo del banco para seguir"
+                : "Ver resumen →"}
           </button>
         </div>
       )}
@@ -369,13 +419,27 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
             <SummaryRow label="Total contado" value={formatCOP(totalCounted)} highlight />
             <SummaryRow label={isPM ? "Dejó la mañana" : "Monto esperado"} value={formatCOP(expectedAmount)} />
             <div className={`flex items-center justify-between text-sm font-bold p-3 rounded-xl ${difference === 0 ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"}`}>
-              <span>{isPM ? "Verificación" : "Diferencia"}</span>
+              <span>{isPM ? "Verificación" : "Diferencia efectivo"}</span>
               <span className="text-lg tnum">
                 {difference === 0
                   ? (isPM ? "✅ Caja completa" : "✅ Cuadre perfecto")
                   : (isPM ? `⚠️ Rectificar: ${difference > 0 ? "+" : ""}${formatCOP(difference)}` : `${difference > 0 ? "+" : ""}${formatCOP(difference)}`)}
               </span>
             </div>
+            {/* Conciliación de banco (AM y Cierre) */}
+            {verifiesBank && bankProvided && (
+              <>
+                <hr className="border-border" />
+                <SummaryRow label="🏦 Banco esperado" value={formatCOP(bankExpected)} />
+                <SummaryRow label="🏦 Banco real" value={formatCOP(bankCounted as number)} />
+                <div className={`flex items-center justify-between text-sm font-bold p-3 rounded-xl ${bankDifference === 0 ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"}`}>
+                  <span>Diferencia banco</span>
+                  <span className="text-lg tnum">
+                    {bankDifference === 0 ? "✅ Banco cuadrado" : `${bankDifference > 0 ? "+" : ""}${formatCOP(bankDifference)}`}
+                  </span>
+                </div>
+              </>
+            )}
             {notes && <SummaryRow label="Notas" value={notes} />}
           </div>
           <button

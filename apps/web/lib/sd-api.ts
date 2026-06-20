@@ -721,6 +721,10 @@ export interface ShiftClose {
   totalCounted: number;
   totalExpected: number;
   difference: number;
+  // Conciliación de banco (null en turnos donde no se verificó banco)
+  bankCounted?: number | null;
+  bankExpected?: number | null;
+  bankDifference?: number | null;
   notes?: string;
   createdByName?: string | null;
   closedAt: string;
@@ -743,5 +747,7 @@ export const registerShift = (data: {
   handedBy?: string;
   denominations: ShiftClose["denominations"];
   expectedAmount: number;
+  // Saldo real del banco que ingresa el operador (para conciliar banco). Opcional.
+  bankCounted?: number | null;
   notes?: string;
 }) => apiFetch<ShiftClose>("/shifts", { method: "POST", body: JSON.stringify(data) });

@@ -471,6 +471,12 @@ model ShiftClose {
   totalCounted  Int
   totalExpected Int
   difference    Int
+  // Conciliación del BANCO (además del efectivo). El operador ingresa el saldo real
+  // del banco y se compara contra el esperado del sistema, para detectar descuadres
+  // bancarios que el conteo de efectivo no puede ver. Nulos en turnos antiguos.
+  bankCounted   Int?
+  bankExpected  Int?
+  bankDifference Int?
   notes         String?
   createdBy     String?
   createdByName String?

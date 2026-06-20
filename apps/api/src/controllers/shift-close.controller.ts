@@ -27,11 +27,17 @@ export async function register(req: Request, res: Response) {
   // ignorando los movimientos de efectivo de la tarde y mostrando un descuadre
   // falso igual a esos movimientos (p. ej. −$179.000 por bases entregadas después
   // del cierre AM, aunque la caja estuviera perfecta).
-  const expectedAmount = (await getExpectedBalancesForDate(date)).cash;
+  const expected = await getExpectedBalancesForDate(date);
+  const expectedAmount = expected.cash;
 
+  // El saldo esperado de BANCO también lo decide el servidor. El cliente solo manda
+  // bankCounted (el saldo real leído del banco); si no lo manda, no se concilia banco.
+  const bankCounted = req.body.bankCounted;
   res.status(201).json(await svc.registerShift({
     ...req.body,
     expectedAmount,
+    bankCounted: bankCounted == null ? null : Number(bankCounted),
+    bankExpected: bankCounted == null ? null : expected.bank,
     createdBy: actor.id,
     createdByName: actor.name,
   }));
