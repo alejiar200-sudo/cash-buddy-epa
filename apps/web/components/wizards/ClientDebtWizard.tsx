@@ -4,6 +4,7 @@ import { WizardShell } from "./WizardShell";
 import { MoneyInput } from "../MoneyInput";
 import { toast } from "sonner";
 import * as api from "@/lib/sd-api";
+import { todayBogota } from "@/lib/format";
 
 type Mode = "new_client" | "add_debt" | "pay_debt";
 
@@ -22,11 +23,11 @@ export function ClientDebtWizard({ open, onOpenChange, mode, client, debt, onDon
   const [phone, setPhone] = useState("");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState(0);
-  const [debtDate, setDebtDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [debtDate, setDebtDate] = useState(() => todayBogota());
   const [payMedium, setPayMedium] = useState<"cash" | "bank">("cash");
   const [saving, setSaving] = useState(false);
 
-  function reset() { setStep(1); setName(""); setPhone(""); setDescription(""); setAmount(0); setPayMedium("cash"); setDebtDate(new Date().toISOString().slice(0, 10)); }
+  function reset() { setStep(1); setName(""); setPhone(""); setDescription(""); setAmount(0); setPayMedium("cash"); setDebtDate(todayBogota()); }
   function close() { onOpenChange(false); setTimeout(reset, 250); }
 
   const totalSteps = mode === "new_client" ? 3 : mode === "add_debt" ? 3 : 2;
@@ -150,7 +151,7 @@ export function ClientDebtWizard({ open, onOpenChange, mode, client, debt, onDon
           <MoneyInput value={amount} onChange={setAmount} autoFocus />
           <div>
             <label className="text-xs text-muted-foreground font-medium">Fecha de la deuda</label>
-            <input type="date" value={debtDate} max={new Date().toISOString().slice(0, 10)}
+            <input type="date" value={debtDate} max={todayBogota()}
               onChange={e => setDebtDate(e.target.value)}
               className="w-full mt-1 glass rounded-2xl px-5 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/30" />
           </div>

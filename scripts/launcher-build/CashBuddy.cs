@@ -39,7 +39,11 @@ class CashBuddy
     const int    HealthIntervalMs = 30000;
 
     static readonly string AppUrl     = "http://localhost:" + AppPort;
-    static readonly string ProjectDir = @"C:\EPA DOMICILIOS\cash-buddy-epa";
+    // Ruta del proyecto = carpeta donde está el propio CashBuddy.exe. Así funciona
+    // en cualquier PC (C:\cash-buddy-epa, C:\EPA DOMICILIOS\cash-buddy-epa, etc.)
+    // sin tener que recompilar con una ruta fija.
+    static readonly string ProjectDir = System.IO.Path.GetDirectoryName(
+        System.Reflection.Assembly.GetExecutingAssembly().Location);
     static readonly string LogFile    = System.IO.Path.Combine(ProjectDir, "cashbuddy-launcher.log");
     static readonly object LogLock    = new object();
 

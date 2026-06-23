@@ -47,7 +47,13 @@ export async function create(data: {
     const driver = await prisma.driver.findUnique({ where: { id: data.driverId } });
     driverName = driver?.name;
   }
-  const when = data.date ? new Date(data.date) : new Date();
+  // Fecha del movimiento. Defensa: NINGÚN movimiento puede quedar fechado en el
+  // futuro (eso lo sacaría del "esperado de hoy" y el dinero parecería no existir).
+  // Si por una zona horaria mal calculada en el cliente llega una fecha futura, se
+  // ajusta a "ahora". El back-dating al pasado sí se respeta (corrección manual).
+  const now = new Date();
+  let when = data.date ? new Date(data.date) : now;
+  if (Number.isNaN(when.getTime()) || when.getTime() > now.getTime()) when = now;
 
   // Enlace explícito de contraparte: comparten un pairId. Así, salida ↔ retorno se
   // cuadran sin depender de coincidencias de monto.

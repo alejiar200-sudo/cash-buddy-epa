@@ -4,6 +4,7 @@ import { WizardShell } from "./WizardShell";
 import { MoneyInput } from "../MoneyInput";
 import { toast } from "sonner";
 import * as api from "@/lib/sd-api";
+import { todayBogota } from "@/lib/format";
 
 interface Props {
   open: boolean;
@@ -27,7 +28,7 @@ export function UnifiedBankWizard({ open, onOpenChange, onDone, prefill }: Props
   const [cashPart, setCashPart] = useState(0);
   const [bankPart, setBankPart] = useState(0);
   const [description, setDescription] = useState("");
-  const [txDate, setTxDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [txDate, setTxDate] = useState(() => todayBogota());
   const [saving, setSaving] = useState(false);
   const [pairWith, setPairWith] = useState<string | undefined>();
   const [noCounterpart, setNoCounterpart] = useState(false);
@@ -45,7 +46,7 @@ export function UnifiedBankWizard({ open, onOpenChange, onDone, prefill }: Props
 
   function reset() {
     setStep(1); setType(null); setMedium(null); setAmount(0); setCashPart(0); setBankPart(0);
-    setDescription(""); setTxDate(new Date().toISOString().slice(0, 10)); setPairWith(undefined);
+    setDescription(""); setTxDate(todayBogota()); setPairWith(undefined);
     setNoCounterpart(false);
   }
   function close() { onOpenChange(false); setTimeout(reset, 250); }
@@ -63,7 +64,9 @@ export function UnifiedBankWizard({ open, onOpenChange, onDone, prefill }: Props
         amount: effectiveAmount,
         ...(isMixed ? { cashAmount: cashPart, bankAmount: bankPart } : {}),
         description: description || (type === "ingreso" ? "Ingreso" : "Salida"),
-        date: new Date(txDate + "T12:00:00").toISOString(),
+        // Anclar al mediodía de Bogotá (-05:00) para que el movimiento caiga SIEMPRE
+        // dentro del día calendario de Bogotá, sin importar la zona horaria del equipo.
+        date: new Date(txDate + "T12:00:00-05:00").toISOString(),
         ...(pairWith ? { pairWith } : {}),
         ...(!pairWith ? { noCounterpart } : {}),
       });
@@ -178,7 +181,7 @@ export function UnifiedBankWizard({ open, onOpenChange, onDone, prefill }: Props
             className="w-full glass-strong rounded-2xl px-5 py-4 text-base outline-none focus:ring-2 focus:ring-primary/40" />
           <div>
             <label className="text-xs text-muted-foreground font-medium">Fecha</label>
-            <input type="date" value={txDate} max={new Date().toISOString().slice(0, 10)}
+            <input type="date" value={txDate} max={todayBogota()}
               onChange={e => setTxDate(e.target.value)}
               className="w-full mt-1 glass rounded-2xl px-5 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/30" />
           </div>

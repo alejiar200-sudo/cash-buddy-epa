@@ -4,6 +4,7 @@ import { MoneyInput } from "../MoneyInput";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth";
 import { toast } from "sonner";
+import { todayBogota } from "@/lib/format";
 
 interface Props { open: boolean; onOpenChange: (v: boolean) => void; date: string; }
 
@@ -83,7 +84,7 @@ export function ExpenseWizard({ open, onOpenChange, date }: Props) {
             <input
               type="date"
               value={expenseDate}
-              max={new Date().toISOString().slice(0, 10)}
+              max={todayBogota()}
               onChange={(e) => setExpenseDate(e.target.value)}
               className="w-full mt-1 glass rounded-2xl px-5 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/30"
             />

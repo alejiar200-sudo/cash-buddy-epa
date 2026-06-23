@@ -1,4 +1,26 @@
-import "dotenv/config";
+import { config as loadDotenv } from "dotenv";
+import path from "node:path";
+import fs from "node:fs";
+
+// Carga robusta del .env: no depende del directorio de trabajo (cwd).
+// El lanzador arranca node desde apps/api, pero el .env vive en la raíz del
+// monorepo. Cargamos primero el .env del cwd (compatibilidad) y luego buscamos
+// hacia arriba desde este archivo el primer .env (apps/api o la raíz) para que
+// DATABASE_URL siempre se encuentre, sin importar desde dónde se ejecute.
+loadDotenv(); // cwd/.env si existe
+{
+  let dir = __dirname;
+  for (let i = 0; i < 8; i++) {
+    const candidate = path.join(dir, ".env");
+    if (fs.existsSync(candidate)) {
+      loadDotenv({ path: candidate }); // no sobrescribe variables ya definidas
+      break;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break; // raíz del disco
+    dir = parent;
+  }
+}
 
 function required(name: string, fallback?: string): string {
   const value = process.env[name] ?? fallback;

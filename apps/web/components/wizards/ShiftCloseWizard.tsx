@@ -52,30 +52,30 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
       .catch(() => setDoneShifts(new Set()));
   }, [open, date]);
 
-  // Al seleccionar turno:
-  //  - MAÑANA: el sistema calcula el efectivo esperado (movimientos del día).
-  //  - TARDE: es una VERIFICACIÓN de lo que dejó la mañana → el esperado es lo que
-  //    contó la persona de la mañana; la tarde solo confirma que esté completo.
+  // El efectivo esperado SIEMPRE lo calcula el sistema (apertura + ingresos − gastos
+  // − bases entregadas + devoluciones + movimientos). TODOS los turnos —incluida la
+  // tarde— se comparan contra ese valor real, no contra lo que contó la mañana. Así
+  // las bases y demás movimientos ya registrados nunca generan un faltante falso.
   useEffect(() => {
     if (!shift || !date) return;
     setAmShift(null);
     setBankCounted(""); // evitar arrastrar un saldo de banco de otro turno
-    api.getShiftsForDate(date).then(shifts => {
-      const am = shifts.find(s => s.shift === "AM") ?? null;
-      if (shift === "PM") {
-        setAmShift(am);
+    // Cargar quién cerró la mañana solo como referencia (trazabilidad en PM).
+    if (shift === "PM") {
+      api.getShiftsForDate(date).then(shifts => {
+        const am = shifts.find(s => s.shift === "AM") ?? null;
         if (am) {
-          setExpectedAmount(am.totalCounted);          // verificar lo que dejó la mañana
-          setHandedBy(am.receivedBy || am.createdByName || ""); // la mañana entrega
+          setAmShift(am);
+          setHandedBy(am.receivedBy || am.createdByName || "");
         }
-      }
-    }).catch(() => {});
+      }).catch(() => {});
+    }
 
-    // El efectivo/banco esperado del sistema (para mostrar; en la mañana es la base de comparación)
+    // Efectivo/banco esperado del sistema = base de comparación para TODOS los turnos.
     api.getExpectedForDate(date)
       .then(r => {
         setAutoExpected({ cash: r.expectedCash, bank: r.expectedBank });
-        if (shift === "AM" || shift === "close") setExpectedAmount(r.expectedCash);
+        setExpectedAmount(r.expectedCash);
       })
       .catch(() => {});
   }, [shift, date]);
@@ -85,8 +85,8 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
   const totalCounted = totalBills + totalCoins;
   const difference = totalCounted - expectedAmount;
 
-  // Banco: solo se concilia en AM y Cierre (no en la verificación PM).
-  const verifiesBank = shift === "AM" || shift === "close";
+  // Banco: OBLIGATORIO en todos los cierres (AM, PM y Cierre). Puede ser 0, pero
+  // no puede quedar vacío.
   const bankExpected = autoExpected?.bank ?? 0;
   const bankProvided = bankCounted !== "";
   const bankDifference = bankProvided ? (bankCounted as number) - bankExpected : 0;
@@ -112,6 +112,11 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
     if (!shift) return;
     setSaving(true);
     try {
+      if (!bankProvided) {
+        toast.error("Debe ingresar el valor del banco para continuar con el cierre.");
+        setSaving(false);
+        return;
+      }
       await api.registerShift({
         date,
         shift,
@@ -119,26 +124,20 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
         handedBy: handedBy || undefined,
         denominations: { bills: bills.filter(b => b.qty > 0), coins: coins.filter(c => c.qty > 0) },
         expectedAmount,
-        // Solo AM y Cierre concilian banco; en PM no se envía.
-        bankCounted: verifiesBank && bankProvided ? (bankCounted as number) : null,
+        // Banco obligatorio en todos los turnos.
+        bankCounted: bankCounted as number,
         notes: notes || undefined,
       });
       const label = shift === "AM" ? "Recibo AM" : shift === "PM" ? "Recibo PM" : "Cierre final";
-      const bankOff = verifiesBank && bankProvided && bankDifference !== 0;
-      if (isPM) {
-        if (difference !== 0) {
-          toast.warning(`⚠️ La caja NO está completa: faltante/sobrante de ${formatCOP(Math.abs(difference))}. Hay que rectificar caja.`);
-        } else {
-          toast.success(`✅ Verificado: ${morningPerson} dejó la caja completa. Recibo PM cerrado.`);
-        }
-      } else if (difference !== 0 || bankOff) {
+      const bankOff = bankDifference !== 0;
+      if (difference !== 0 || bankOff) {
         const partes = [
           difference !== 0 ? `efectivo ${formatCOP(Math.abs(difference))}` : null,
           bankOff ? `banco ${formatCOP(Math.abs(bankDifference))}` : null,
         ].filter(Boolean).join(" · ");
         toast.warning(`⚠️ ${label} registrado con descuadre — ${partes}`);
       } else {
-        toast.success(`✅ ${label} registrado — cuadre perfecto (efectivo y banco)`);
+        toast.success(`✅ ${label} registrado — caja cuadrada (efectivo y banco)`);
       }
       onDone?.();
       close();
@@ -156,7 +155,7 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
     isPM ? "¿Quién recibe (tarde)?" : isClose ? "¿Quién cierra el día?" : "¿Quién entrega y quién recibe?",
     "Conteo de billetes",
     "Conteo de monedas",
-    isPM ? "Verificación de la mañana" : "Efectivo esperado y saldo de banco",
+    "Efectivo esperado y saldo de banco",
     "Resumen del turno",
   ];
 
@@ -304,84 +303,64 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
             <span className="font-black text-lg tnum text-primary">{formatCOP(totalCoins)}</span>
           </div>
           <button onClick={() => setStep(5)} className="w-full bg-primary text-primary-foreground font-bold py-4 rounded-2xl shadow-cash">
-            {isPM ? "Siguiente → Verificación" : "Siguiente → Monto esperado"}
+            Siguiente → Monto esperado
           </button>
         </div>
       )}
 
       {step === 5 && (
         <div className="space-y-4">
-          {isPM ? (
-            /* TARDE = verificación de lo que dejó la mañana */
+          <p className="text-sm text-muted-foreground">
+            El <strong>efectivo esperado</strong> lo calcula el sistema (ya descuenta bases entregadas y demás movimientos) y no se puede modificar. Para el <strong>banco</strong>, escribe el saldo real que tienes.
+          </p>
+          {isPM && amShift && (
+            <div className="glass rounded-xl px-4 py-2.5 text-xs text-muted-foreground">
+              🌅 La mañana la dejó <strong>{morningPerson}</strong>. Se verifica contra el efectivo esperado del sistema (no contra lo que contó la mañana), para que las bases del día no aparezcan como faltante.
+            </div>
+          )}
+          {autoExpected ? (
             <>
-              <div className="glass-strong rounded-2xl p-4 space-y-2 border border-primary/20">
-                <div className="text-xs font-bold uppercase tracking-wider text-primary">Verificación de la mañana</div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Cerró la mañana</span>
-                  <span className="font-bold">{morningPerson}</span>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="glass-strong rounded-2xl p-5 text-center border border-primary/20">
+                  <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">💵 Efectivo esperado <span title="Calculado por el sistema, no editable">🔒</span></div>
+                  <div className="text-2xl font-black tnum text-primary mt-1">{formatCOP(autoExpected.cash)}</div>
                 </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Dejó en caja</span>
-                  <span className="font-bold tnum">{formatCOP(expectedAmount)}</span>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Tú contaste</span>
-                  <span className="font-bold tnum">{formatCOP(totalCounted)}</span>
+                <div className="glass-strong rounded-2xl p-5 text-center border border-border">
+                  <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">🏦 Banco esperado <span title="Calculado por el sistema, no editable">🔒</span></div>
+                  <div className="text-2xl font-black tnum mt-1">{formatCOP(autoExpected.bank)}</div>
                 </div>
               </div>
+              {/* Comparación de efectivo: contado vs esperado real del sistema */}
               <div className={`rounded-2xl p-4 text-center font-bold ${difference === 0 ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"}`}>
                 {difference === 0
-                  ? `✅ Caja completa — ${morningPerson} dejó todo bien`
-                  : `⚠️ Hay que RECTIFICAR CAJA: ${difference > 0 ? "sobran" : "faltan"} ${formatCOP(Math.abs(difference))}`}
+                  ? `✅ Caja cuadrada — contaste ${formatCOP(totalCounted)}`
+                  : `⚠️ ${difference > 0 ? "Sobran" : "Faltan"} ${formatCOP(Math.abs(difference))} (contaste ${formatCOP(totalCounted)} vs esperado ${formatCOP(autoExpected.cash)})`}
+              </div>
+              {/* Saldo REAL del banco que ingresa el operador → detecta descuadres. OBLIGATORIO. */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-muted-foreground flex items-center gap-1">🏦 Saldo real en el banco (obligatorio · puede ser 0)</label>
+                <input
+                  type="number"
+                  min={0}
+                  inputMode="numeric"
+                  value={bankCounted}
+                  onChange={(e) => setBankCounted(e.target.value === "" ? "" : Math.max(0, parseInt(e.target.value) || 0))}
+                  placeholder="Escribe el saldo real del banco"
+                  className={`w-full glass-strong rounded-2xl px-5 py-3 text-lg font-bold tnum outline-none focus:ring-2 ${bankProvided ? "focus:ring-primary/40" : "ring-2 ring-red-400/60 focus:ring-red-400/60"}`}
+                />
+                {bankProvided ? (
+                  <div className={`rounded-2xl p-3 text-center font-bold text-sm ${bankDifference === 0 ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"}`}>
+                    {bankDifference === 0
+                      ? "✅ Banco cuadrado"
+                      : `⚠️ Descuadre en banco: ${bankDifference > 0 ? "sobran" : "faltan"} ${formatCOP(Math.abs(bankDifference))}`}
+                  </div>
+                ) : (
+                  <p className="text-sm font-medium text-red-500">Debe ingresar el valor del banco para continuar con el cierre.</p>
+                )}
               </div>
             </>
           ) : (
-            /* MAÑANA = efectivo/banco esperado calculado por el sistema (no editable) */
-            <>
-              <p className="text-sm text-muted-foreground">
-                El <strong>efectivo esperado</strong> lo calcula el sistema y no se puede modificar. Para el <strong>banco</strong>, escribe el saldo real que tienes para detectar descuadres.
-              </p>
-              {autoExpected ? (
-                <>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="glass-strong rounded-2xl p-5 text-center border border-primary/20">
-                      <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">💵 Efectivo esperado <span title="Calculado por el sistema, no editable">🔒</span></div>
-                      <div className="text-2xl font-black tnum text-primary mt-1">{formatCOP(autoExpected.cash)}</div>
-                    </div>
-                    <div className="glass-strong rounded-2xl p-5 text-center border border-border">
-                      <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">🏦 Banco esperado <span title="Calculado por el sistema, no editable">🔒</span></div>
-                      <div className="text-2xl font-black tnum mt-1">{formatCOP(autoExpected.bank)}</div>
-                    </div>
-                  </div>
-                  {/* Saldo REAL del banco que ingresa el operador → detecta descuadres */}
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-muted-foreground flex items-center gap-1">🏦 Saldo real en el banco (lo que ves en la cuenta)</label>
-                    <input
-                      type="number"
-                      min={0}
-                      inputMode="numeric"
-                      value={bankCounted}
-                      onChange={(e) => setBankCounted(e.target.value === "" ? "" : Math.max(0, parseInt(e.target.value) || 0))}
-                      placeholder="Escribe el saldo real del banco"
-                      className="w-full glass-strong rounded-2xl px-5 py-3 text-lg font-bold tnum outline-none focus:ring-2 focus:ring-primary/40"
-                    />
-                    {bankProvided && (
-                      <div className={`rounded-2xl p-3 text-center font-bold text-sm ${bankDifference === 0 ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"}`}>
-                        {bankDifference === 0
-                          ? "✅ Banco cuadrado"
-                          : `⚠️ Descuadre en banco: ${bankDifference > 0 ? "sobran" : "faltan"} ${formatCOP(Math.abs(bankDifference))}`}
-                      </div>
-                    )}
-                  </div>
-                </>
-              ) : (
-                <div className="glass rounded-2xl p-4 text-center text-sm text-muted-foreground">Calculando valores esperados del sistema…</div>
-              )}
-              <div className="glass rounded-xl px-4 py-2.5 text-xs text-muted-foreground flex items-start gap-2">
-                <span>🔒</span>
-                <span>El efectivo y el banco esperado los calcula el sistema. Tú solo confirmas el conteo de efectivo y escribes el saldo real del banco.</span>
-              </div>
-            </>
+            <div className="glass rounded-2xl p-4 text-center text-sm text-muted-foreground">Calculando valores esperados del sistema…</div>
           )}
           <div className="space-y-2">
             <label className="text-sm font-medium text-muted-foreground">Observaciones (opcional)</label>
@@ -395,13 +374,13 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
           </div>
           <button
             onClick={() => setStep(6)}
-            disabled={(!isPM && !autoExpected) || (verifiesBank && !bankProvided)}
+            disabled={!autoExpected || !bankProvided}
             className="w-full bg-primary text-primary-foreground font-bold py-4 rounded-2xl shadow-cash disabled:opacity-40"
           >
-            {!isPM && !autoExpected
+            {!autoExpected
               ? "Cargando valor del sistema…"
-              : verifiesBank && !bankProvided
-                ? "Escribe el saldo del banco para seguir"
+              : !bankProvided
+                ? "Ingresa el valor del banco para continuar"
                 : "Ver resumen →"}
           </button>
         </div>
@@ -416,18 +395,18 @@ export function ShiftCloseWizard({ open, onOpenChange, date, onDone }: Props) {
             <hr className="border-border" />
             <SummaryRow label="Total billetes" value={formatCOP(totalBills)} />
             <SummaryRow label="Total monedas" value={formatCOP(totalCoins)} />
-            <SummaryRow label="Total contado" value={formatCOP(totalCounted)} highlight />
-            <SummaryRow label={isPM ? "Dejó la mañana" : "Monto esperado"} value={formatCOP(expectedAmount)} />
+            <SummaryRow label="Efectivo contado" value={formatCOP(totalCounted)} highlight />
+            <SummaryRow label="Efectivo esperado (sistema)" value={formatCOP(expectedAmount)} />
             <div className={`flex items-center justify-between text-sm font-bold p-3 rounded-xl ${difference === 0 ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"}`}>
-              <span>{isPM ? "Verificación" : "Diferencia efectivo"}</span>
+              <span>Diferencia efectivo</span>
               <span className="text-lg tnum">
                 {difference === 0
-                  ? (isPM ? "✅ Caja completa" : "✅ Cuadre perfecto")
-                  : (isPM ? `⚠️ Rectificar: ${difference > 0 ? "+" : ""}${formatCOP(difference)}` : `${difference > 0 ? "+" : ""}${formatCOP(difference)}`)}
+                  ? "✅ Caja cuadrada"
+                  : `${difference > 0 ? "+" : ""}${formatCOP(difference)}`}
               </span>
             </div>
-            {/* Conciliación de banco (AM y Cierre) */}
-            {verifiesBank && bankProvided && (
+            {/* Conciliación de banco (obligatoria en todos los turnos) */}
+            {bankProvided && (
               <>
                 <hr className="border-border" />
                 <SummaryRow label="🏦 Banco esperado" value={formatCOP(bankExpected)} />

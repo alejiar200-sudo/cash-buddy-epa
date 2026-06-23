@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import * as svc from "../services/shift-close.service";
 import { getExpectedBalancesForDate } from "../services/shipday-dashboard.service";
 import { getActor } from "../lib/actor";
+import { badRequest } from "../lib/errors";
 
 export async function getForDate(req: Request, res: Response) {
   res.json(await svc.getShiftsForDate(req.params.date));
@@ -30,14 +31,20 @@ export async function register(req: Request, res: Response) {
   const expected = await getExpectedBalancesForDate(date);
   const expectedAmount = expected.cash;
 
-  // El saldo esperado de BANCO también lo decide el servidor. El cliente solo manda
-  // bankCounted (el saldo real leído del banco); si no lo manda, no se concilia banco.
-  const bankCounted = req.body.bankCounted;
+  // El saldo esperado de BANCO también lo decide el servidor. El cliente manda
+  // bankCounted (el saldo real leído del banco). Es OBLIGATORIO en todo cierre:
+  // puede ser 0, pero no puede quedar vacío.
+  const rawBank = req.body.bankCounted;
+  if (rawBank == null || rawBank === "" || Number.isNaN(Number(rawBank))) {
+    throw badRequest("Debe ingresar el valor del banco para continuar con el cierre.");
+  }
+  const bankCounted = Number(rawBank);
+
   res.status(201).json(await svc.registerShift({
     ...req.body,
     expectedAmount,
-    bankCounted: bankCounted == null ? null : Number(bankCounted),
-    bankExpected: bankCounted == null ? null : expected.bank,
+    bankCounted,
+    bankExpected: expected.bank,
     createdBy: actor.id,
     createdByName: actor.name,
   }));
