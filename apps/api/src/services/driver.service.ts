@@ -98,6 +98,8 @@ export async function registerPayment(driverId: string, amount: number, medium: 
           driverId,
           branchId: driver.branchId,
           amount: baseAlloc,
+          cashAmount: medium === "cash" ? baseAlloc : 0,
+          bankAmount: medium === "bank" ? baseAlloc : 0,
           type: "pago",
           notes: `Devolución de base (${medium === "cash" ? "efectivo" : "transferencia"})${notes ? ` · ${notes}` : ""}`,
           createdBy: actor?.id ?? null,
@@ -132,6 +134,23 @@ export async function registerPayment(driverId: string, amount: number, medium: 
         ...(excess > 0 ? { creditAmount: newCredit, creditMedium: medium } : {}),
       },
     });
+
+    // Pago por banco: registrar el ingreso para que el saldo bancario se actualice.
+    if (medium === "bank") {
+      await tx.bankTransaction.create({
+        data: {
+          type: "ingreso",
+          medium: "bank",
+          amount,
+          description: `Pago domiciliario ${driver.name}${notes ? ` · ${notes}` : ""}`,
+          driverId,
+          driverName: driver.name,
+          createdBy: actor?.id ?? null,
+          createdByName: actor?.name ?? null,
+          noCounterpart: true,
+        },
+      });
+    }
   });
 
   const excess = Math.max(0, amount - driver.pendingDebt);
@@ -232,6 +251,8 @@ export async function applyBankToDriver(
           driverId,
           branchId: driver.branchId,
           amount: baseAlloc,
+          cashAmount: medium === "cash" ? baseAlloc : 0,
+          bankAmount: medium === "bank" ? baseAlloc : 0,
           type: "pago",
           notes: bankLinkedBaseNote(medium),
           createdBy: actor?.id ?? null,
