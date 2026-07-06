@@ -73,12 +73,14 @@ export const registerPayment = (id: string, amount: number, medium: "cash" | "ba
     `/sd/drivers/${id}/payment`,
     { method: "POST", body: JSON.stringify({ amount, medium, notes }) },
   );
-export const getOrdersToday = (branchId?: string) =>
-  apiFetch<Order[]>(`/sd/orders/today${branchId ? `?branchId=${branchId}` : ""}`);
+export const getOrdersToday = (branchId?: string, date?: string) => {
+  const q = new URLSearchParams(Object.entries({ branchId, date }).filter(([, v]) => v) as [string, string][]);
+  return apiFetch<Order[]>(`/sd/orders/today${q.toString() ? "?" + q : ""}`);
+};
 
 // ─── Bases ────────────────────────────────────────────────────────────────────
 
-export const getBases = (params?: { branchId?: string; driverId?: string }) => {
+export const getBases = (params?: { branchId?: string; driverId?: string; from?: string; to?: string }) => {
   const q = new URLSearchParams(Object.entries(params ?? {}).filter(([, v]) => v) as [string, string][]);
   return apiFetch<BaseTransaction[]>(`/sd/bases${q.toString() ? "?" + q : ""}`);
 };
@@ -176,8 +178,10 @@ export interface DashboardFull extends DashboardData {
   topClientDebtors: { id: string; name: string; phone?: string; pendingDebt: number }[];
 }
 
-export const getDashboardFull = (branchId?: string) =>
-  apiFetch<DashboardFull>(`/sd/dashboard/full${branchId ? `?branchId=${branchId}` : ""}`);
+export const getDashboardFull = (branchId?: string, date?: string) => {
+  const q = new URLSearchParams(Object.entries({ branchId, date }).filter(([, v]) => v) as [string, string][]);
+  return apiFetch<DashboardFull>(`/sd/dashboard/full${q.toString() ? "?" + q : ""}`);
+};
 
 // ─── Unified bank movements ───────────────────────────────────────────────────
 
@@ -735,6 +739,28 @@ export const getShifts = (params?: { from?: string; to?: string }) => {
   return apiFetch<ShiftClose[]>(`/shifts${q.toString() ? "?" + q : ""}`);
 };
 export const getShiftsForDate = (date: string) => apiFetch<ShiftClose[]>(`/shifts/${date}`);
+
+export interface DaySummary {
+  date: string;
+  initialCash: number;
+  initialBank: number;
+  initialTotal: number;
+  ingresos: number;
+  egresos: number;
+  comision: number;
+  deudasGeneradas: number;
+  deudasCobradas: number;
+  finalCash: number;
+  finalBank: number;
+  finalTotal: number;
+  netProfit: number;
+  hasClose: boolean;
+  cajaCuadrada: boolean;
+}
+/** Resumen detallado de un día (Historial): junta Caja, Banco, domiciliarios, bases y deudas. */
+export const getDaySummary = (date: string) => apiFetch<DaySummary>(`/days/${date}/summary`);
+/** Día operativo actual: no avanza al siguiente hasta que se registre el Cierre del día. */
+export const getCurrentOperatingDate = () => apiFetch<{ date: string }>(`/shifts/current-date`);
 export const deleteShift = (id: string) => apiFetch<void>(`/shifts/${id}`, { method: "DELETE" });
 
 /** #6 — efectivo y banco esperados calculados automáticamente para la fecha. */

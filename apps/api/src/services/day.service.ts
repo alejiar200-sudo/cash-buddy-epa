@@ -3,6 +3,10 @@ import { prisma } from "../lib/prisma";
 import { balancesAtEndOfDay } from "./calc";
 import { toDayData, toMovement } from "./mappers";
 import { getSettings } from "./settings.service";
+import { bogotaDayRange } from "../lib/date-range";
+import { isBankLinkedPaymentNote, isBankLinkedBaseNote } from "../lib/balance-markers";
+
+const DELIVERED_FILTER = { in: ["DELIVERED", "COMPLETED"] };
 
 // Garantiza que exista el registro del día, arrastrando saldos del día previo.
 // Equivale a ensureDay() del store original.
@@ -87,6 +91,90 @@ export async function listDays(): Promise<DayData[]> {
     include: { movements: { orderBy: { createdAt: "asc" } } },
   });
   return days.map(toDayData);
+}
+
+/**
+ * Resumen detallado de un día para el Historial: inicio (efectivo/banco),
+ * ingresos, egresos, comisión de domicilios, deudas de clientes, saldo final
+ * y ganancia — juntando TODAS las fuentes (Caja, Banco, pagos de
+ * domiciliarios, bases, deudas de clientes), no solo los Movement de Caja
+ * como hacía dayBalances(). El "cuadre" (verde/rojo) sale exclusivamente del
+ * Cierre (ShiftClose shift="close") registrado ese día — el resto de la
+ * información no afecta ese semáforo.
+ */
+export async function getDaySummary(date: string) {
+  const day = await getDay(date);
+  const range = bogotaDayRange(date);
+
+  const [bankTxs, driverPayments, bases, clientDebtsPaid, clientDebtsGenAgg, orders, closeShift] = await Promise.all([
+    prisma.bankTransaction.findMany({ where: { date: range } }),
+    prisma.driverPayment.findMany({ where: { date: range } }),
+    prisma.baseTransaction.findMany({ where: { date: range } }),
+    prisma.clientDebt.findMany({ where: { paid: true, paidAt: range }, select: { paidCash: true, paidBank: true, paidAmount: true } }),
+    prisma.clientDebt.aggregate({ where: { createdAt: range }, _sum: { amount: true } }),
+    prisma.shipdayOrder.findMany({ where: { deliveredAt: range, status: DELIVERED_FILTER }, select: { companyAmount: true } }),
+    prisma.shiftClose.findUnique({ where: { date_shift: { date, shift: "close" } } }),
+  ]);
+
+  let cashIn = 0, cashOut = 0, bankIn = 0, bankOut = 0;
+  let gastos = 0, nomina = 0;
+
+  for (const m of day.movements) {
+    if (m.status !== "confirmed") continue;
+    if (m.medium === "cash") { if (m.type === "ingreso") cashIn += m.amount; else cashOut += m.amount; }
+    else { if (m.type === "ingreso") bankIn += m.amount; else bankOut += m.amount; }
+    const cat = m.category as number;
+    if (m.type === "egreso" && (cat === 3 || cat === 4)) gastos += m.amount;
+    if (m.type === "egreso" && (cat === 15 || cat === 16 || cat === 18)) nomina += m.amount;
+  }
+  for (const t of bankTxs) {
+    if (t.type === "ingreso") { if (t.medium === "cash") cashIn += t.amount; else bankIn += t.amount; }
+    else { if (t.medium === "cash") cashOut += t.amount; else bankOut += t.amount; }
+  }
+  // Pagos de comisión de domiciliarios: dinero que entra. Se excluyen los que son
+  // contraparte de un BankTransaction ya contado arriba (evita doble conteo).
+  for (const p of driverPayments) {
+    if (isBankLinkedPaymentNote(p.notes)) continue;
+    if (p.medium === "cash") cashIn += p.amount; else bankIn += p.amount;
+  }
+  // Bases: entrega sale, devolución vuelve. Igual, se excluyen las bank-linked.
+  for (const b of bases) {
+    if (b.type === "pago" && isBankLinkedBaseNote(b.notes)) continue;
+    const cash = b.cashAmount || (b.bankAmount ? 0 : b.amount);
+    const bank = b.bankAmount;
+    if (b.type === "entrega") { cashOut += cash; bankOut += bank; }
+    else { cashIn += cash; bankIn += bank; }
+  }
+  // Cobros de deudas de clientes: dinero que entra según el medio del abono.
+  for (const cp of clientDebtsPaid) { cashIn += cp.paidCash; bankIn += cp.paidBank; }
+
+  const comision = orders.reduce((s, o) => s + o.companyAmount, 0);
+  const deudasGeneradas = clientDebtsGenAgg._sum.amount ?? 0;
+  const deudasCobradas = clientDebtsPaid.reduce((s, cp) => s + (cp.paidAmount ?? cp.paidCash + cp.paidBank), 0);
+
+  const finalCash = day.initialCash + cashIn - cashOut;
+  const finalBank = day.initialBank + bankIn - bankOut;
+
+  // El semáforo de "caja cuadrada" depende EXCLUSIVAMENTE del Cierre del día.
+  const cajaCuadrada = !!closeShift && closeShift.difference === 0 && (closeShift.bankDifference == null || closeShift.bankDifference === 0);
+
+  return {
+    date,
+    initialCash: day.initialCash,
+    initialBank: day.initialBank,
+    initialTotal: day.initialCash + day.initialBank,
+    ingresos: cashIn + bankIn,
+    egresos: cashOut + bankOut,
+    comision,
+    deudasGeneradas,
+    deudasCobradas,
+    finalCash,
+    finalBank,
+    finalTotal: finalCash + finalBank,
+    netProfit: comision - gastos - nomina,
+    hasClose: !!closeShift,
+    cajaCuadrada,
+  };
 }
 
 export async function updateArqueo(

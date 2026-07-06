@@ -6,7 +6,8 @@ import { useLive } from "@/lib/use-live";
 import { toast } from "sonner";
 import * as api from "@/lib/sd-api";
 import type { Driver, Branch, BaseTransaction } from "@/lib/sd-api";
-import { formatCOP } from "@/lib/format";
+import { formatCOP, prettyDate, todayISO } from "@/lib/format";
+import { useDay } from "@/lib/day-context";
 import { useAuth } from "@/lib/auth";
 import { EditRequestWizard, type EditableField } from "@/components/wizards/EditRequestWizard";
 import { DeleteRequestWizard } from "@/components/wizards/DeleteRequestWizard";
@@ -28,12 +29,15 @@ export default function BasesPage() {
   const [editBaseReq, setEditBaseReq] = useState<BaseTransaction | null>(null);
   const [deleteBaseReq, setDeleteBaseReq] = useState<BaseTransaction | null>(null);
   const [saving, setSaving] = useState(false);
+  // Día seleccionado en el sistema (flechas de fecha de la cabecera) — igual que Pedidos.
+  const { date } = useDay();
+  const isToday = date === todayISO();
 
   const load = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
       const [b, d, br] = await Promise.all([
-        api.getBases(branchId ? { branchId } : {}),
+        api.getBases({ branchId: branchId || undefined, from: date, to: date }),
         api.getDrivers(branchId || undefined),
         api.getBranches(),
       ]);
@@ -44,7 +48,7 @@ export default function BasesPage() {
     if (!silent) setLoading(false);
   };
 
-  useEffect(() => { load(); }, [branchId]);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [branchId, date]);
   useLive(() => load(true), 5000);
 
   async function handleDeleteBase(b: BaseTransaction) {
@@ -133,25 +137,28 @@ export default function BasesPage() {
         </div>
       </div>
 
-      <div className="flex gap-3">
+      <div className="flex gap-3 flex-wrap items-center">
         <select value={branchId} onChange={e => setBranchId(e.target.value)} className="px-3 py-2 rounded-xl border border-border bg-background text-sm">
           <option value="">Todas las sucursales</option>
           {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
         </select>
         <button onClick={() => load()} className="p-2 rounded-xl border border-border hover:bg-secondary transition"><RefreshCw className="h-4 w-4" /></button>
+        <span className="text-xs text-muted-foreground flex items-center gap-1.5 px-3 py-2 rounded-xl bg-secondary/40">
+          📅 Mostrando el día <strong className="capitalize text-foreground">{isToday ? "de hoy" : prettyDate(date)}</strong> — usa las flechas de fecha (arriba) para cambiar de día.
+        </span>
       </div>
 
       <div className="grid grid-cols-3 gap-4">
         <div className="glass-strong rounded-2xl p-4">
-          <p className="text-xs text-muted-foreground">Total entregado</p>
+          <p className="text-xs text-muted-foreground">Entregado {isToday ? "hoy" : "ese día"}</p>
           <p className="font-black text-xl tnum text-orange-500 mt-1">{formatCOP(totalGiven)}</p>
         </div>
         <div className="glass-strong rounded-2xl p-4">
-          <p className="text-xs text-muted-foreground">Total pagado</p>
+          <p className="text-xs text-muted-foreground">Pagado {isToday ? "hoy" : "ese día"}</p>
           <p className="font-black text-xl tnum text-green-600 mt-1">{formatCOP(totalPaid)}</p>
         </div>
         <div className="glass-strong rounded-2xl p-4">
-          <p className="text-xs text-muted-foreground">Saldo pendiente</p>
+          <p className="text-xs text-muted-foreground">Saldo neto {isToday ? "hoy" : "ese día"}</p>
           <p className={`font-black text-xl tnum mt-1 ${totalGiven - totalPaid > 0 ? "text-red-500" : "text-muted-foreground"}`}>{formatCOP(totalGiven - totalPaid)}</p>
         </div>
       </div>
@@ -168,7 +175,9 @@ export default function BasesPage() {
       {loading ? (
         <div className="text-center py-12 text-muted-foreground">Cargando...</div>
       ) : driverGroups.length === 0 ? (
-        <div className="glass-strong rounded-3xl p-12 text-center text-muted-foreground">Sin registros de bases</div>
+        <div className="glass-strong rounded-3xl p-12 text-center text-muted-foreground">
+          {isToday ? "Sin registros de bases hoy" : "Sin registros de bases ese día"}
+        </div>
       ) : (
         <div className="space-y-3">
           {driverGroups.map(g => {

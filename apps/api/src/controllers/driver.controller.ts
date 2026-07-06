@@ -27,5 +27,6 @@ export async function payCredit(req: Request, res: Response) {
 
 export async function ordersToday(req: Request, res: Response) {
   const branchId = (req.query.branchId as string | undefined) || undefined;
-  res.json(await svc.getOrdersToday(branchId));
+  const date = (req.query.date as string | undefined) || undefined;
+  res.json(await svc.getOrdersToday(branchId, date));
 }

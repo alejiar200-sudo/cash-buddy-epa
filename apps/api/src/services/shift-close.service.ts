@@ -1,5 +1,6 @@
 import { prisma } from "../lib/prisma";
 import { conflict } from "../lib/errors";
+import { todayBogota } from "../lib/date-range";
 
 export interface Denominations {
   bills: { value: number; qty: number }[];
@@ -14,6 +15,32 @@ function sumDenominations(d: Denominations) {
 
 export async function getShiftsForDate(date: string) {
   return prisma.shiftClose.findMany({ where: { date }, orderBy: { closedAt: "asc" } });
+}
+
+function addDays(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
+}
+
+/**
+ * Día "operativo" actual para efectos de Caja: el día siguiente al último
+ * Cierre (shift "close") registrado, SIN importar cuántos días calendario
+ * hayan pasado. Antes se usaba la fecha calendario de hoy, y un cierre hecho
+ * después de medianoche (p. ej. 00:30 del día siguiente) ya no encontraba el
+ * día anterior disponible para cerrarlo — el día se "cerraba solo" al pasar
+ * de fecha en vez de cuando el usuario realmente hacía el cierre.
+ */
+export async function getCurrentOperatingDate(): Promise<string> {
+  const today = todayBogota();
+  const lastClose = await prisma.shiftClose.findFirst({
+    where: { shift: "close" },
+    orderBy: { date: "desc" },
+  });
+  if (!lastClose) return today;
+  const next = addDays(lastClose.date, 1);
+  return next <= today ? next : today;
 }
 
 export async function getShift(date: string, shift: "AM" | "PM" | "close") {

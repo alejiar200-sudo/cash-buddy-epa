@@ -1,6 +1,7 @@
 import { prisma } from "../lib/prisma";
 import { bogotaOpenRange } from "../lib/date-range";
 import { badRequest } from "../lib/errors";
+import { BANK_LINKED_PAYMENT_NOTE, BANK_LINKED_BASE_PREFIX } from "../lib/balance-markers";
 
 export async function list(params?: { type?: "ingreso" | "egreso"; from?: string; to?: string }) {
   const where: Record<string, unknown> = {};
@@ -104,13 +105,54 @@ export async function create(data: {
 }
 
 export async function remove(id: string) {
-  const tx = await prisma.bankTransaction.findUnique({ where: { id } });
-  if (tx?.groupId) {
-    // Movimiento mixto: eliminar ambas mitades enlazadas.
-    await prisma.bankTransaction.deleteMany({ where: { groupId: tx.groupId } });
-    return;
-  }
-  await prisma.bankTransaction.delete({ where: { id } });
+  const original = await prisma.bankTransaction.findUnique({ where: { id } });
+  if (!original) return;
+  // Movimiento mixto: hay que revertir/eliminar ambas mitades enlazadas.
+  const rows = original.groupId
+    ? await prisma.bankTransaction.findMany({ where: { groupId: original.groupId } })
+    : [original];
+
+  await prisma.$transaction(async (tx) => {
+    for (const row of rows) {
+      // Si este movimiento se usó para descontar la deuda de un domiciliario
+      // (noCounterpart + driverId, vía applyBankToDriver), hay que revertir esa
+      // deuda y limpiar los registros contables subsidiarios que se crearon junto
+      // a él — igual que hace edit-request.service.ts al aprobar una eliminación.
+      if (row.driverId && row.noCounterpart && row.type === "ingreso") {
+        await tx.driver.update({
+          where: { id: row.driverId },
+          data: { pendingDebt: { increment: row.amount } },
+        });
+        // Búsqueda por ID (bankTransactionId), sin ambigüedad. Se mantiene un
+        // respaldo por ventana de fecha ±5s SOLO para registros viejos creados
+        // antes de que existiera el enlace directo (bankTransactionId=null) —
+        // antes ESTA era la única forma de buscarlos y fallaba si el
+        // BankTransaction tenía una fecha distinta a "ahora" (p. ej. backdateado),
+        // dejando "pagos" huérfanos que inflaban base pagada sin bajar la deuda.
+        const window = { gte: new Date(row.date.getTime() - 5000), lte: new Date(row.date.getTime() + 5000) };
+        await tx.baseTransaction.deleteMany({
+          where: {
+            driverId: row.driverId,
+            type: "pago",
+            notes: { startsWith: BANK_LINKED_BASE_PREFIX },
+            OR: [{ bankTransactionId: row.id }, { bankTransactionId: null, date: window }],
+          },
+        });
+        await tx.driverPayment.deleteMany({
+          where: {
+            driverId: row.driverId,
+            notes: { startsWith: BANK_LINKED_PAYMENT_NOTE },
+            OR: [{ bankTransactionId: row.id }, { bankTransactionId: null, date: window }],
+          },
+        });
+      }
+    }
+    if (original.groupId) {
+      await tx.bankTransaction.deleteMany({ where: { groupId: original.groupId } });
+    } else {
+      await tx.bankTransaction.delete({ where: { id } });
+    }
+  });
 }
 
 export async function summary(from?: string, to?: string) {

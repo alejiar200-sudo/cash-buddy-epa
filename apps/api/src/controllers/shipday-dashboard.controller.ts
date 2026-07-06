@@ -3,12 +3,14 @@ import * as svc from "../services/shipday-dashboard.service";
 
 export async function dashboard(req: Request, res: Response) {
   const branchId = req.query.branchId as string | undefined;
-  res.json(await svc.getDashboard(branchId));
+  const date = req.query.date as string | undefined;
+  res.json(await svc.getDashboard(branchId, date));
 }
 
 export async function dashboardFull(req: Request, res: Response) {
   const branchId = req.query.branchId as string | undefined;
-  res.json(await svc.getDashboardFull(branchId));
+  const date = req.query.date as string | undefined;
+  res.json(await svc.getDashboardFull(branchId, date));
 }
 
 export async function dailyStats(req: Request, res: Response) {

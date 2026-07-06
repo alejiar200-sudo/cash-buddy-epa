@@ -4,6 +4,7 @@ import { WizardShell } from "./WizardShell";
 import { MoneyInput } from "../MoneyInput";
 import { toast } from "sonner";
 import * as api from "@/lib/sd-api";
+import { todayBogota } from "@/lib/format";
 
 interface Props {
   open: boolean;
@@ -18,7 +19,7 @@ export function BankTransactionWizard({ open, onOpenChange, onDone, defaultType 
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState(0);
   const [reference, setReference] = useState("");
-  const [txDate, setTxDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [txDate, setTxDate] = useState(() => todayBogota());
   const [saving, setSaving] = useState(false);
 
   function reset() {
@@ -27,7 +28,7 @@ export function BankTransactionWizard({ open, onOpenChange, onDone, defaultType 
     setDescription("");
     setAmount(0);
     setReference("");
-    setTxDate(new Date().toISOString().slice(0, 10));
+    setTxDate(todayBogota());
   }
 
   function close() {
@@ -109,7 +110,7 @@ export function BankTransactionWizard({ open, onOpenChange, onDone, defaultType 
               type="date"
               value={txDate}
               onChange={(e) => setTxDate(e.target.value)}
-              max={new Date().toISOString().slice(0, 10)}
+              max={todayBogota()}
               className="w-full glass rounded-2xl px-5 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/30"
             />
           </div>

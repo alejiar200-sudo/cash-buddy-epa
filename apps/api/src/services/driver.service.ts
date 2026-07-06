@@ -84,14 +84,36 @@ export async function registerPayment(driverId: string, amount: number, medium: 
   const baseAlloc = Math.min(amount, basePending);
   const commissionAlloc = amount - baseAlloc;
 
-  // IMPORTANTE: el dinero del domiciliario ENTRA a la empresa.
-  //  - La parte de base se registra UNA sola vez como BaseTransaction "pago" (devolución).
-  //  - La parte de comisión se registra como DriverPayment (solo el monto de comisión).
-  // Así no se duplica el movimiento ni aparece un egreso fantasma.
+  // Registra UN solo movimiento (bankTransaction) como registro autoritativo de display y saldo.
+  // BaseTransaction y DriverPayment son contabilidad interna de la deuda del domiciliario;
+  // se marcan como bank-linked para que getExpectedBalances y unified-movements los ignoren.
   let payment = null as Awaited<ReturnType<typeof prisma.driverPayment.create>> | null;
 
   await prisma.$transaction(async (tx) => {
-    // Devolución de base (dinero que regresa a la empresa)
+    // Registro único de display y saldo (funciona para efectivo y transferencia).
+    // Se crea PRIMERO para poder enlazar por ID los registros contables internos
+    // que dependen de él — así, si este BankTransaction se elimina después, se
+    // pueden encontrar y borrar SIN ambigüedad (antes se buscaban por fecha
+    // aproximada ±5s, lo que fallaba y dejaba "pagos" huérfanos).
+    const breakdown = [
+      ...(baseAlloc > 0 ? [`base ${baseAlloc}`] : []),
+      ...(commissionAlloc > 0 ? [`comisión ${commissionAlloc}`] : []),
+    ].join(" + ");
+    const bankTx = await tx.bankTransaction.create({
+      data: {
+        type: "ingreso",
+        medium,
+        amount,
+        description: `Pago domiciliario ${driver.name}${breakdown ? ` (${breakdown})` : ""}${notes ? ` · ${notes}` : ""}`,
+        driverId,
+        driverName: driver.name,
+        createdBy: actor?.id ?? null,
+        createdByName: actor?.name ?? null,
+        noCounterpart: true,
+      },
+    });
+
+    // Contabilidad interna: devolución de base (excluida de saldo y display).
     if (baseAlloc > 0) {
       await tx.baseTransaction.create({
         data: {
@@ -101,14 +123,15 @@ export async function registerPayment(driverId: string, amount: number, medium: 
           cashAmount: medium === "cash" ? baseAlloc : 0,
           bankAmount: medium === "bank" ? baseAlloc : 0,
           type: "pago",
-          notes: `Devolución de base (${medium === "cash" ? "efectivo" : "transferencia"})${notes ? ` · ${notes}` : ""}`,
+          notes: `${bankLinkedBaseNote(medium)} · Devolución de base${notes ? ` · ${notes}` : ""}`,
           createdBy: actor?.id ?? null,
           createdByName: actor?.name ?? null,
+          bankTransactionId: bankTx.id,
         },
       });
     }
 
-    // Pago de comisión (solo la parte que NO es base)
+    // Contabilidad interna: pago de comisión (excluido de saldo y display).
     if (commissionAlloc > 0) {
       payment = await tx.driverPayment.create({
         data: {
@@ -116,14 +139,15 @@ export async function registerPayment(driverId: string, amount: number, medium: 
           branchId: driver.branchId,
           amount: commissionAlloc,
           medium,
-          notes: `Pago de comisión${notes ? ` · ${notes}` : ""}`,
+          notes: `${BANK_LINKED_PAYMENT_NOTE} · Pago de comisión${notes ? ` · ${notes}` : ""}`,
           createdBy: actor?.id ?? null,
           createdByName: actor?.name ?? null,
+          bankTransactionId: bankTx.id,
         },
       });
     }
 
-    // La deuda baja hasta 0; el exceso se convierte en crédito (empresa le debe al domiciliario)
+    // Deuda del domiciliario
     const newDebt = Math.max(0, driver.pendingDebt - amount);
     const excess = Math.max(0, amount - driver.pendingDebt);
     const newCredit = (driver.creditAmount ?? 0) + excess;
@@ -134,23 +158,6 @@ export async function registerPayment(driverId: string, amount: number, medium: 
         ...(excess > 0 ? { creditAmount: newCredit, creditMedium: medium } : {}),
       },
     });
-
-    // Pago por banco: registrar el ingreso para que el saldo bancario se actualice.
-    if (medium === "bank") {
-      await tx.bankTransaction.create({
-        data: {
-          type: "ingreso",
-          medium: "bank",
-          amount,
-          description: `Pago domiciliario ${driver.name}${notes ? ` · ${notes}` : ""}`,
-          driverId,
-          driverName: driver.name,
-          createdBy: actor?.id ?? null,
-          createdByName: actor?.name ?? null,
-          noCounterpart: true,
-        },
-      });
-    }
   });
 
   const excess = Math.max(0, amount - driver.pendingDebt);
@@ -257,6 +264,7 @@ export async function applyBankToDriver(
           notes: bankLinkedBaseNote(medium),
           createdBy: actor?.id ?? null,
           createdByName: actor?.name ?? null,
+          bankTransactionId: bankTxId,
         },
       });
     }
@@ -270,6 +278,7 @@ export async function applyBankToDriver(
           notes: BANK_LINKED_PAYMENT_NOTE,
           createdBy: actor?.id ?? null,
           createdByName: actor?.name ?? null,
+          bankTransactionId: bankTxId,
         },
       });
     }
@@ -341,9 +350,9 @@ export async function payCredit(
   return { paid: creditAmount, medium, driverName: driver.name };
 }
 
-export async function getOrdersToday(branchId?: string) {
+export async function getOrdersToday(branchId?: string, date?: string) {
   // Ventana del día en zona Bogotá, sin depender de la TZ del proceso Node.
-  const { gte, lte } = bogotaDayRange(todayBogota());
+  const { gte, lte } = bogotaDayRange(date ?? todayBogota());
   const where: Record<string, unknown> = {
     status: DELIVERED_FILTER,
     deliveredAt: { gte, lte },

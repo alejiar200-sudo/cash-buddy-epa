@@ -1,6 +1,7 @@
 import { prisma } from "../lib/prisma";
 import { notFound, badRequest } from "../lib/errors";
 import { toBogotaDateStr } from "../lib/date-range";
+import { BANK_LINKED_PAYMENT_NOTE, BANK_LINKED_BASE_PREFIX } from "../lib/balance-markers";
 
 type ChangeMap = Record<string, { old: string; new: string }>;
 
@@ -119,9 +120,42 @@ async function deleteEntity(entityType: string, entityId: string) {
     case "Movement":
       await prisma.movement.delete({ where: { id: entityId } });
       break;
-    case "BankTransaction":
-      await prisma.bankTransaction.delete({ where: { id: entityId } });
+    case "BankTransaction": {
+      const bankTx = await prisma.bankTransaction.findUnique({ where: { id: entityId } });
+      if (!bankTx) break;
+      await prisma.$transaction(async (tx) => {
+        // Si es un pago de domiciliario (noCounterpart + driverId), revertir deuda
+        // y limpiar los registros contables subsidiarios (BaseTransaction + DriverPayment
+        // bank-linked) que se crearon junto a este bankTransaction.
+        if (bankTx.driverId && bankTx.noCounterpart && bankTx.type === "ingreso") {
+          await tx.driver.update({
+            where: { id: bankTx.driverId },
+            data: { pendingDebt: { increment: bankTx.amount } },
+          });
+          // Búsqueda por ID (bankTransactionId); respaldo por ventana de fecha ±5s
+          // solo para registros viejos sin el enlace directo. Ver comentario en
+          // bank-transaction.service.ts::remove().
+          const window = { gte: new Date(bankTx.date.getTime() - 5000), lte: new Date(bankTx.date.getTime() + 5000) };
+          await tx.baseTransaction.deleteMany({
+            where: {
+              driverId: bankTx.driverId,
+              type: "pago",
+              notes: { startsWith: BANK_LINKED_BASE_PREFIX },
+              OR: [{ bankTransactionId: bankTx.id }, { bankTransactionId: null, date: window }],
+            },
+          });
+          await tx.driverPayment.deleteMany({
+            where: {
+              driverId: bankTx.driverId,
+              notes: { startsWith: BANK_LINKED_PAYMENT_NOTE },
+              OR: [{ bankTransactionId: bankTx.id }, { bankTransactionId: null, date: window }],
+            },
+          });
+        }
+        await tx.bankTransaction.delete({ where: { id: entityId } });
+      });
       break;
+    }
     case "DriverPayment": {
       const payment = await prisma.driverPayment.findUnique({ where: { id: entityId } });
       if (!payment) return;

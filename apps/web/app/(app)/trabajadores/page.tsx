@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useStore } from "@/lib/store";
 import { Avatar } from "@/components/Avatar";
-import { formatCOP } from "@/lib/format";
+import { formatCOP, todayBogota } from "@/lib/format";
 import { Plus, Bike, Building2, ChevronDown, ChevronUp, DollarSign, Loader2 } from "lucide-react";
 import * as api from "@/lib/sd-api";
 import type { DriverStatement } from "@/lib/sd-api";
@@ -21,7 +21,9 @@ export default function WorkersPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [payrollTarget, setPayrollTarget] = useState<string | null>(null);
   const [driverPayTarget, setDriverPayTarget] = useState<{ id: string; name: string } | null>(null);
-  const today = new Date().toISOString().slice(0, 10);
+  // Bogotá, no UTC: pasadas las 7pm hora Bogotá, el UTC ya cayó en el día
+  // siguiente y una nómina registrada esa noche quedaba fechada un día después.
+  const today = todayBogota();
 
   const [drivers, setDrivers] = useState<api.Driver[]>([]);
   const [driverStatements, setDriverStatements] = useState<Record<string, DriverStatement>>({});

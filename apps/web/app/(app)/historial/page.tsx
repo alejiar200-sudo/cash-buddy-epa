@@ -1,10 +1,15 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useStore, dayBalances } from "@/lib/store";
 import { useDay } from "@/lib/day-context";
 import { formatCOP, prettyDate } from "@/lib/format";
+import * as api from "@/lib/sd-api";
 import { Calendar, Table as TableIcon, X } from "lucide-react";
+
+function isCuadrada(close: api.ShiftClose): boolean {
+  return close.difference === 0 && (close.bankDifference == null || close.bankDifference === 0);
+}
 
 export default function HistoryPage() {
   const [view, setView] = useState<"calendar" | "table">("calendar");
@@ -12,6 +17,22 @@ export default function HistoryPage() {
   const { state } = useStore();
   const { setDate } = useDay();
   const [openDate, setOpenDate] = useState<string | null>(null);
+  // Cierres ("close") del mes visible — el semáforo verde/rojo del calendario
+  // depende ÚNICA Y EXCLUSIVAMENTE de si la caja cuadró en el Cierre registrado
+  // ese día, sin importar el resto de la información del detalle.
+  const [closeShifts, setCloseShifts] = useState<Record<string, api.ShiftClose>>({});
+
+  useEffect(() => {
+    const [y, m] = month.split("-").map(Number);
+    const lastDay = new Date(y, m, 0).getDate();
+    const from = `${month}-01`;
+    const to = `${month}-${String(lastDay).padStart(2, "0")}`;
+    api.getShifts({ from, to }).then(shifts => {
+      const map: Record<string, api.ShiftClose> = {};
+      for (const s of shifts) if (s.shift === "close") map[s.date] = s;
+      setCloseShifts(map);
+    }).catch(() => {});
+  }, [month]);
 
   const days = useMemo(() => {
     const [y, m] = month.split("-").map(Number);
@@ -20,15 +41,15 @@ export default function HistoryPage() {
     for (let d = 1; d <= last; d++) {
       const date = `${month}-${String(d).padStart(2, "0")}`;
       const day = state.days[date];
-      if (!day) { arr.push({ date, balances: null, status: "empty" }); continue; }
-      const bal = dayBalances(day);
-      const hasPending = day.movements.some(m => m.status === "pending");
-      const arqueoDiff = ((day.arqueoClose?.bills ?? 0) + (day.arqueoClose?.coins ?? 0) + (day.arqueoClose?.bank ?? 0)) - (bal.cash + bal.bank);
-      const status: "ok" | "warn" | "danger" = arqueoDiff !== 0 && day.arqueoClose ? "danger" : hasPending ? "warn" : "ok";
-      arr.push({ date, balances: bal, status });
+      const close = closeShifts[date];
+      let status: "ok" | "warn" | "danger" | "empty";
+      if (close) status = isCuadrada(close) ? "ok" : "danger";
+      else if (day) status = "warn";
+      else status = "empty";
+      arr.push({ date, balances: day ? dayBalances(day) : null, status });
     }
     return arr;
-  }, [month, state.days]);
+  }, [month, state.days, closeShifts]);
 
   return (
     <div className="space-y-5">
@@ -58,7 +79,7 @@ export default function HistoryPage() {
             return (
               <button
                 key={d.date}
-                onClick={() => d.balances && setOpenDate(d.date)}
+                onClick={() => setOpenDate(d.date)}
                 className={`aspect-square rounded-2xl p-2 text-left transition hover:scale-105 ${cls}`}
               >
                 <div className="text-2xl font-black">{dayNum}</div>
@@ -94,7 +115,7 @@ export default function HistoryPage() {
         </div>
       )}
 
-      {openDate && state.days[openDate] && (
+      {openDate && (
         <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={() => setOpenDate(null)}>
           <div className="glass-strong rounded-3xl p-6 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
@@ -113,20 +134,55 @@ export default function HistoryPage() {
 }
 
 function DayDetail({ date }: { date: string }) {
-  const { state } = useStore();
-  const day = state.days[date];
-  const bal = dayBalances(day);
-  const ing = day.movements.filter(m => m.type === "ingreso" && m.status === "confirmed").reduce((s, m) => s + m.amount, 0);
-  const egr = day.movements.filter(m => m.type === "egreso" && m.status === "confirmed").reduce((s, m) => s + m.amount, 0);
+  const [summary, setSummary] = useState<api.DaySummary | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    setSummary(null);
+    api.getDaySummary(date).then(s => { if (alive) setSummary(s); }).catch(() => {});
+    return () => { alive = false; };
+  }, [date]);
+
+  if (!summary) return <div className="text-center py-8 text-sm text-muted-foreground">Cargando…</div>;
+
   return (
-    <div className="space-y-2 tnum text-sm">
-      <Detail label="Inicio del día" value={day.initialCash + day.initialBank} />
-      <Detail label="Total ingresos" value={ing} tone="cash" />
-      <Detail label="Total egresos" value={-egr} tone="danger" />
-      <div className="border-t border-border my-2" />
-      <Detail label="💵 Efectivo final" value={bal.cash} tone="cash" />
-      <Detail label="🏦 Banco final" value={bal.bank} tone="bank" />
-      <Detail label="💰 Total general" value={bal.total} big />
+    <div className="space-y-3 tnum text-sm">
+      {/* El único criterio de "cuadró": el Cierre registrado ese día. */}
+      <div className={`rounded-xl p-3 text-center font-bold ${
+        summary.cajaCuadrada ? "bg-cash-soft text-cash" : summary.hasClose ? "bg-danger-soft text-danger" : "bg-secondary text-muted-foreground"
+      }`}>
+        {summary.cajaCuadrada ? "✅ Caja cuadrada" : summary.hasClose ? "⚠️ Caja no cuadró" : "⏳ Sin cierre registrado"}
+      </div>
+
+      <div className="space-y-1">
+        <p className="text-xs font-bold text-muted-foreground uppercase tracking-wide">Inicio del día</p>
+        <Detail label="💵 Efectivo" value={summary.initialCash} tone="cash" />
+        <Detail label="🏦 Banco" value={summary.initialBank} tone="bank" />
+        <Detail label="Total" value={summary.initialTotal} />
+      </div>
+
+      <div className="border-t border-border my-1" />
+
+      <div className="space-y-1">
+        <Detail label="↑ Ingresos" value={summary.ingresos} tone="cash" />
+        <Detail label="↓ Salidas" value={-summary.egresos} tone="danger" />
+        <Detail label="Comisión de domicilios" value={summary.comision} tone="cash" />
+        <Detail label="Deudas de clientes generadas" value={summary.deudasGeneradas} />
+        {summary.deudasCobradas > 0 && <Detail label="Deudas de clientes cobradas" value={summary.deudasCobradas} tone="cash" />}
+      </div>
+
+      <div className="border-t border-border my-1" />
+
+      <div className="space-y-1">
+        <p className="text-xs font-bold text-muted-foreground uppercase tracking-wide">Queda en caja</p>
+        <Detail label="💵 Efectivo" value={summary.finalCash} tone="cash" />
+        <Detail label="🏦 Banco" value={summary.finalBank} tone="bank" />
+        <Detail label="💰 Total en caja" value={summary.finalTotal} big />
+      </div>
+
+      <div className="border-t border-border my-1" />
+
+      <Detail label="📈 Ganancia de la empresa" value={summary.netProfit} tone={summary.netProfit >= 0 ? "cash" : "danger"} big />
     </div>
   );
 }

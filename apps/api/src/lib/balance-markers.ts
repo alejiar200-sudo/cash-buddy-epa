@@ -13,7 +13,7 @@
  * exclusión nunca se desincronicen.
  */
 export const BANK_LINKED_PAYMENT_NOTE = "Pago vía movimiento bancario";
-const BANK_LINKED_BASE_PREFIX = "Pago vía banco (";
+export const BANK_LINKED_BASE_PREFIX = "Pago vía banco (";
 
 export function bankLinkedBaseNote(medium: "cash" | "bank"): string {
   return `${BANK_LINKED_BASE_PREFIX}${medium === "cash" ? "efectivo" : "transferencia"})`;

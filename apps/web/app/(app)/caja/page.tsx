@@ -40,14 +40,20 @@ export default function CajaPage() {
     try { await api.deleteShift(s.id); toast.success("Cierre eliminado"); load(); }
     catch (err) { toast.error(String(err)); }
   }
-  const today = todayStr();
+  // Día OPERATIVO (no la fecha calendario): el sistema no avanza al día siguiente
+  // hasta que se registre el Cierre del día actual. Así un cierre hecho pasada la
+  // medianoche sigue encontrando el día anterior disponible para cerrarlo.
+  const [today, setToday] = useState(todayStr());
 
   const load = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
       const from = new Date();
       from.setDate(from.getDate() - 30);
-      const data = await api.getShifts({ from: from.toISOString().slice(0, 10) });
+      const [data] = await Promise.all([
+        api.getShifts({ from: from.toISOString().slice(0, 10) }),
+        api.getCurrentOperatingDate().then(r => setToday(r.date)).catch(() => {}),
+      ]);
       setShifts(prev => JSON.stringify(prev) === JSON.stringify(data) ? prev : data);
     } catch { if (!silent) toast.error("Error al cargar cierres de caja"); }
     if (!silent) setLoading(false);

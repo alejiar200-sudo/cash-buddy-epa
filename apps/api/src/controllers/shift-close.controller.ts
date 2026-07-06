@@ -8,6 +8,11 @@ export async function getForDate(req: Request, res: Response) {
   res.json(await svc.getShiftsForDate(req.params.date));
 }
 
+/** Día operativo actual (no se salta al siguiente hasta que se registre el Cierre). */
+export async function currentDate(req: Request, res: Response) {
+  res.json({ date: await svc.getCurrentOperatingDate() });
+}
+
 /** #6 — efectivo y banco esperados calculados automáticamente para la fecha. */
 export async function expectedForDate(req: Request, res: Response) {
   const { cash, bank } = await getExpectedBalancesForDate(req.params.date);

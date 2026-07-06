@@ -39,6 +39,9 @@ cashbuddy-launcher.log
 # Respaldos de base de datos (contienen API Key cifrada, hashes y datos sensibles)
 backups/
 *.sql
+# Excepción: las migraciones de Prisma SÍ deben versionarse (si no, otra sucursal
+# que clone el repo no tendría los cambios de esquema y el sistema fallaría).
+!apps/api/prisma/migrations/**/*.sql
 
 # Editor
 .vscode/*

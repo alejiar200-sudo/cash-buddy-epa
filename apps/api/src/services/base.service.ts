@@ -1,6 +1,7 @@
 import { prisma } from "../lib/prisma";
 import { notFound, badRequest } from "../lib/errors";
 import { applyDebtDelta } from "./driver.service";
+import { bogotaOpenRange } from "../lib/date-range";
 
 // Eliminar una base (admin directo): revierte el efecto en la deuda del domiciliario.
 export async function removeBase(id: string) {
@@ -31,10 +32,12 @@ export async function editBase(id: string, input: { cashAmount?: number; bankAmo
   return { ok: true };
 }
 
-export async function listBases(branchId?: string, driverId?: string) {
+export async function listBases(branchId?: string, driverId?: string, from?: string, to?: string) {
   const where: Record<string, unknown> = {};
   if (branchId) where.branchId = branchId;
   if (driverId) where.driverId = driverId;
+  const dateWhere = bogotaOpenRange(from, to);
+  if (dateWhere) where.date = dateWhere;
   return prisma.baseTransaction.findMany({
     where,
     include: {

@@ -4,31 +4,31 @@ import * as shiftSvc from "./shift-close.service";
 import { bogotaDayRange as dateRange, bogotaMonthRange as monthRange, todayBogota } from "../lib/date-range";
 import { isBankLinkedPaymentNote, isBankLinkedBaseNote } from "../lib/balance-markers";
 
-export async function getDashboardFull(branchId?: string) {
-  const today = todayBogota();
-  const todayRange = dateRange(today);
+export async function getDashboardFull(branchId?: string, date?: string) {
+  const day = date ?? todayBogota();
+  const dayRange = dateRange(day);
 
-  const [shipday, todayShifts, bankSummary, topClientDebtors, expectedBalances] = await Promise.all([
-    getDashboard(branchId),
-    shiftSvc.getShiftsForDate(today),
-    bankSvc.summary(today, today),
+  const [shipday, dayShifts, bankSummary, topClientDebtors, expectedBalances] = await Promise.all([
+    getDashboard(branchId, day),
+    shiftSvc.getShiftsForDate(day),
+    bankSvc.summary(day, day),
     prisma.client.findMany({
       where: { pendingDebt: { gt: 0 }, active: true },
       orderBy: { pendingDebt: "desc" },
       take: 3,
       select: { id: true, name: true, phone: true, pendingDebt: true },
     }),
-    // Calcular saldos esperados en caja y banco a partir de hoy
-    getExpectedBalances(today, todayRange),
+    // Saldos esperados en caja y banco acumulados hasta el final del día elegido
+    getExpectedBalances(day, dayRange),
   ]);
 
   const shiftsMap = { AM: false, PM: false, close: false } as Record<string, boolean>;
-  for (const s of todayShifts) { shiftsMap[s.shift] = true; }
+  for (const s of dayShifts) { shiftsMap[s.shift] = true; }
 
   return {
     ...shipday,
     caja: {
-      shifts: todayShifts,
+      shifts: dayShifts,
       shiftsStatus: { AM: shiftsMap.AM, PM: shiftsMap.PM, close: shiftsMap.close },
       bankToday: bankSummary,
       expectedCash: expectedBalances.cash,
@@ -130,9 +130,9 @@ async function getExpectedBalances(today: string, todayRange: { gte: Date; lte: 
   return { cash: baseCash, bank: baseBank };
 }
 
-export async function getDashboard(branchId?: string) {
-  const today = todayBogota();
-  const month = today.slice(0, 7);
+export async function getDashboard(branchId?: string, date?: string) {
+  const day = date ?? todayBogota();
+  const month = day.slice(0, 7);
 
   const branchWhere = branchId ? { branchId } : {};
 
@@ -151,7 +151,7 @@ export async function getDashboard(branchId?: string) {
     prisma.driver.count({ where: { ...branchWhere, active: true } }),
     // Usar ShipdayOrder directamente (misma fuente que /pedidos) — evita desincronización con DailyDriverStat
     prisma.shipdayOrder.aggregate({
-      where: { ...branchWhere, status: DELIVERED_STATUS, deliveredAt: dateRange(today) },
+      where: { ...branchWhere, status: DELIVERED_STATUS, deliveredAt: dateRange(day) },
       _sum: { deliveryValue: true, companyAmount: true },
       _count: { id: true },
     }),

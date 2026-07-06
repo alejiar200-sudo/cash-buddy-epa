@@ -3,8 +3,8 @@ import * as svc from "../services/base.service";
 import { getActor } from "../lib/actor";
 
 export async function list(req: Request, res: Response) {
-  const { branchId, driverId } = req.query as Record<string, string>;
-  res.json(await svc.listBases(branchId, driverId));
+  const { branchId, driverId, from, to } = req.query as Record<string, string>;
+  res.json(await svc.listBases(branchId, driverId, from, to));
 }
 
 export async function give(req: Request, res: Response) {

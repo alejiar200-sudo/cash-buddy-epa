@@ -9,7 +9,8 @@ import { UnifiedBankWizard } from "@/components/wizards/UnifiedBankWizard";
 import { DeleteRequestWizard } from "@/components/wizards/DeleteRequestWizard";
 import { useLive } from "@/lib/use-live";
 import { useAuth } from "@/lib/auth";
-import { formatCOP as _fmt } from "@/lib/format";
+import { useDay } from "@/lib/day-context";
+import { formatCOP as _fmt, prettyDate, todayISO } from "@/lib/format";
 
 function formatCOP(n: number) { return _fmt ? _fmt(n) : "$" + n.toLocaleString("es-CO"); }
 function fmtDate(iso: string) {
@@ -69,20 +70,21 @@ function buildRows(movs: UnifiedBankMovement[]): BankRow[] {
 export default function BancoPage() {
   const [movements, setMovements] = useState<UnifiedBankMovement[]>([]);
   const [loading, setLoading] = useState(true);
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
   const [wizardOpen, setWizardOpen] = useState(false);
   const [prefill, setPrefill] = useState<{ type: "ingreso" | "egreso"; amount: number; pairWith?: string } | undefined>();
   const [applyModal, setApplyModal] = useState<{ mov: UnifiedBankMovement } | null>(null);
   const [deleteReq, setDeleteReq] = useState<UnifiedBankMovement | null>(null);
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+  // Día seleccionado en el sistema (flechas de fecha de la cabecera) — igual que Pedidos.
+  const { date } = useDay();
+  const isToday = date === todayISO();
 
   // `silent` = refresco en vivo: sin spinner y sin re-render si nada cambió (evita parpadeo).
   const load = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const data = await api.getUnifiedBankMovements({ from: fromDate || undefined, to: toDate || undefined });
+      const data = await api.getUnifiedBankMovements({ from: date, to: date });
       setMovements(prev => {
         const same = prev.length === data.length && JSON.stringify(prev) === JSON.stringify(data);
         return same ? prev : data;
@@ -91,7 +93,7 @@ export default function BancoPage() {
     if (!silent) setLoading(false);
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [fromDate, toDate]);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [date]);
   useLive(() => load(true), 5000);
 
   const rows = buildRows(movements);
@@ -127,7 +129,9 @@ export default function BancoPage() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-black">Banco</h1>
-          <p className="text-sm text-muted-foreground">Movimientos de dinero de la empresa (efectivo y transferencia)</p>
+          <p className="text-sm text-muted-foreground capitalize">
+            {isToday ? "Hoy" : prettyDate(date)} · movimientos de dinero de la empresa (efectivo y transferencia)
+          </p>
         </div>
         <button
           onClick={() => { setPrefill(undefined); setWizardOpen(true); }}
@@ -137,21 +141,16 @@ export default function BancoPage() {
         </button>
       </div>
 
+      <span className="inline-flex text-xs text-muted-foreground items-center gap-1.5 px-3 py-2 rounded-xl bg-secondary/40">
+        📅 Mostrando el día <strong className="capitalize text-foreground">{isToday ? "de hoy" : prettyDate(date)}</strong> — usa las flechas de fecha (arriba) para cambiar de día.
+      </span>
+
       {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <SummaryCard label="Ingresos" value={formatCOP(ingresos)} color="text-green-600" />
         <SummaryCard label="Salidas" value={formatCOP(egresos)} color="text-red-500" />
         <SummaryCard label="Balance neto" value={formatCOP(balance)} color={balance === 0 ? "text-green-600" : "text-amber-500"} />
         <SummaryCard label="Falta contraparte" value={String(sinContraparte)} color={sinContraparte === 0 ? "text-green-600" : "text-red-500"} />
-      </div>
-
-      {/* Filters */}
-      <div className="flex flex-wrap gap-2">
-        <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="px-3 py-1.5 rounded-xl border border-border bg-background text-sm" />
-        <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="px-3 py-1.5 rounded-xl border border-border bg-background text-sm" />
-        {(fromDate || toDate) && (
-          <button onClick={() => { setFromDate(""); setToDate(""); }} className="px-3 py-1.5 rounded-xl border border-border text-sm hover:bg-secondary transition">✕ Limpiar</button>
-        )}
       </div>
 
       {/* List */}

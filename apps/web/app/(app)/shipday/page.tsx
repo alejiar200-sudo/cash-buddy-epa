@@ -6,30 +6,34 @@ import { toast } from "sonner";
 import Link from "next/link";
 import * as api from "@/lib/sd-api";
 import type { DashboardFull, LocalUrls } from "@/lib/sd-api";
-import { formatCOP } from "@/lib/format";
+import { formatCOP, prettyDate, todayISO } from "@/lib/format";
 import { useStore } from "@/lib/store";
+import { useDay } from "@/lib/day-context";
 import { ShieldCheck } from "lucide-react";
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardFull | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const { date } = useDay();
+  const isToday = date === todayISO();
 
   const load = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const d = await api.getDashboardFull();
+      const d = await api.getDashboardFull(undefined, date);
       setData(d);
       setLastUpdated(new Date());
     } catch { if (!silent) toast.error("Error al cargar dashboard"); }
     if (!silent) setLoading(false);
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [date]);
   useEffect(() => {
     const t = setInterval(() => { if (document.visibilityState === "visible") load(true); }, 8_000);
     return () => clearInterval(t);
-  }, []);
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [date]);
 
   if (loading) {
     return <div className="flex items-center justify-center h-64 text-muted-foreground">Cargando dashboard…</div>;
@@ -72,20 +76,31 @@ export default function DashboardPage() {
       {/* URL de acceso local */}
       <LocalAccessCard />
 
+      {/* Aviso de día seleccionado — igual que en Pedidos */}
+      <div className="flex">
+        <span className="text-xs text-muted-foreground flex items-center gap-1.5 px-3 py-2 rounded-xl bg-secondary/40">
+          📅 Mostrando el día <strong className="capitalize text-foreground">{isToday ? "de hoy" : prettyDate(date)}</strong> — usa las flechas de fecha (arriba) para cambiar de día.
+        </span>
+      </div>
+
       {/* Pedidos del día */}
       <section>
-        <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">Pedidos de hoy</h2>
+        <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">
+          Pedidos {isToday ? "de hoy" : `del ${prettyDate(date)}`}
+        </h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <MetricCard icon="📦" label="Pedidos" value={String(today.orders)} sub="entregados hoy" />
-          <MetricCard icon="💰" label="Valor total" value={formatCOP(today.value)} sub="domicilios hoy" />
-          <MetricCard icon="🏢" label="% empresa" value={formatCOP(today.company)} sub="comisiones hoy" accent />
+          <MetricCard icon="📦" label="Pedidos" value={String(today.orders)} sub={isToday ? "entregados hoy" : "entregados ese día"} />
+          <MetricCard icon="💰" label="Valor total" value={formatCOP(today.value)} sub={isToday ? "domicilios hoy" : "domicilios ese día"} />
+          <MetricCard icon="🏢" label="% empresa" value={formatCOP(today.company)} sub={isToday ? "comisiones hoy" : "comisiones ese día"} accent />
           <MetricCard icon="⚠️" label="Deuda activa" value={formatCOP(debts.totalAmount)} sub={`${debts.driverCount} domiciliarios`} warn={debts.totalAmount > 0} />
         </div>
       </section>
 
       {/* Estado de caja */}
       <section>
-        <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">Estado de caja hoy</h2>
+        <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">
+          Estado de caja {isToday ? "hoy" : `del ${prettyDate(date)}`}
+        </h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Turnos */}
           <div className="glass-strong rounded-2xl p-4">
@@ -115,7 +130,7 @@ export default function DashboardPage() {
                 );
               })}
             </div>
-            {pendingShifts.length > 0 && (
+            {isToday && pendingShifts.length > 0 && (
               <Link href="/caja" className="mt-3 flex items-center justify-center gap-2 w-full py-2.5 bg-primary/10 text-primary rounded-xl text-xs font-bold hover:bg-primary/20 transition">
                 <Clock className="h-3.5 w-3.5" /> Registrar turno pendiente →
               </Link>
@@ -127,7 +142,7 @@ export default function DashboardPage() {
             {/* Efectivo y banco esperados */}
             <div>
               <div className="flex items-center justify-between mb-2">
-                <span className="font-bold text-sm">Saldos esperados hoy</span>
+                <span className="font-bold text-sm">Saldos esperados {isToday ? "hoy" : "a ese día"}</span>
                 <Link href="/movimientos" className="text-xs text-primary font-bold hover:underline">Ver movimientos →</Link>
               </div>
               <div className="grid grid-cols-2 gap-2">
@@ -149,7 +164,9 @@ export default function DashboardPage() {
             {/* Movimientos bancarios de hoy */}
             <div className="border-t border-border pt-3">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Banco hoy</span>
+                <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                  Banco {isToday ? "hoy" : "ese día"}
+                </span>
                 <Link href="/banco" className="text-xs text-primary font-bold hover:underline">Ver todo →</Link>
               </div>
               <div className="space-y-1.5">

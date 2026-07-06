@@ -5,7 +5,8 @@ import { RefreshCw, AlertCircle, Wallet, Banknote, Package, ChevronDown, Chevron
 import { toast } from "sonner";
 import * as api from "@/lib/sd-api";
 import type { Driver, Branch, Order } from "@/lib/sd-api";
-import { formatCOP } from "@/lib/format";
+import { formatCOP, prettyDate, todayISO } from "@/lib/format";
+import { useDay } from "@/lib/day-context";
 import { DriverStatementModal } from "@/components/DriverStatementModal";
 import { LiveBadge } from "@/components/LiveBadge";
 
@@ -18,6 +19,9 @@ export default function DomiciliariosShipdayPage() {
   const [selected, setSelected] = useState<Driver | null>(null);
   const [showTodayList, setShowTodayList] = useState(true);
   const [search, setSearch] = useState("");
+  // Día seleccionado en el sistema (flechas de fecha de la cabecera) — igual que Pedidos.
+  const { date } = useDay();
+  const isToday = date === todayISO();
 
   // Carga completa (con spinner) — incluye sucursales
   const load = async () => {
@@ -26,7 +30,7 @@ export default function DomiciliariosShipdayPage() {
       const [d, b, t] = await Promise.all([
         api.getDrivers(branchId || undefined),
         api.getBranches(),
-        api.getOrdersToday(branchId || undefined),
+        api.getOrdersToday(branchId || undefined, date),
       ]);
       setDrivers(d);
       setBranches(b);
@@ -42,21 +46,21 @@ export default function DomiciliariosShipdayPage() {
     try {
       const [d, t] = await Promise.all([
         api.getDrivers(branchId || undefined),
-        api.getOrdersToday(branchId || undefined),
+        api.getOrdersToday(branchId || undefined, date),
       ]);
       setDrivers(d);
       setTodayOrders(t);
     } catch { /* silencioso */ }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [branchId]);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [branchId, date]);
 
   // Auto-refresh cada 10s (refresco silencioso de datos en vivo)
   useEffect(() => {
     const t = setInterval(refreshLive, 10_000);
     return () => clearInterval(t);
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
-  }, [branchId]);
+  }, [branchId, date]);
 
   // Resumen por domiciliario para hoy
   const todayByDriver = useMemo(() => {
@@ -107,24 +111,29 @@ export default function DomiciliariosShipdayPage() {
         </div>
       </div>
 
+      {/* Aviso de día seleccionado — igual que en Pedidos */}
+      <span className="inline-flex text-xs text-muted-foreground items-center gap-1.5 px-3 py-2 rounded-xl bg-secondary/40">
+        📅 Mostrando el día <strong className="capitalize text-foreground">{isToday ? "de hoy" : prettyDate(date)}</strong> — usa las flechas de fecha (arriba) para cambiar de día.
+      </span>
+
       {/* Top KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KPI label="Deuda total pendiente" value={formatCOP(totalDebt)} icon={<AlertCircle className="h-4 w-4" />} highlight={totalDebt > 0} />
-        <KPI label="Pedidos hoy" value={String(todayOrders.length)} icon={<Package className="h-4 w-4" />} />
-        <KPI label="Valor entregado hoy" value={formatCOP(todayTotal)} icon={<Banknote className="h-4 w-4" />} />
-        <KPI label="% empresa hoy" value={formatCOP(todayCompany)} icon={<Wallet className="h-4 w-4" />} />
+        <KPI label={`Pedidos ${isToday ? "hoy" : "ese día"}`} value={String(todayOrders.length)} icon={<Package className="h-4 w-4" />} />
+        <KPI label={`Valor entregado ${isToday ? "hoy" : "ese día"}`} value={formatCOP(todayTotal)} icon={<Banknote className="h-4 w-4" />} />
+        <KPI label={`% empresa ${isToday ? "hoy" : "ese día"}`} value={formatCOP(todayCompany)} icon={<Wallet className="h-4 w-4" />} />
       </div>
 
-      {/* Pedidos de hoy — todos los domiciliarios */}
+      {/* Pedidos del día — todos los domiciliarios */}
       <div className="glass-strong rounded-3xl overflow-hidden">
         <button
           onClick={() => setShowTodayList(v => !v)}
           className="w-full flex items-center justify-between px-5 py-4 hover:bg-secondary/30 transition"
         >
           <div className="text-left">
-            <h2 className="font-black">Pedidos de hoy — todos los domiciliarios</h2>
+            <h2 className="font-black">Pedidos {isToday ? "de hoy" : `del ${prettyDate(date)}`} — todos los domiciliarios</h2>
             <p className="text-xs text-muted-foreground">
-              {todayOrders.length} pedidos · {todayByDriver.length} domiciliarios activos hoy
+              {todayOrders.length} pedidos · {todayByDriver.length} domiciliarios activos {isToday ? "hoy" : "ese día"}
             </p>
           </div>
           {showTodayList ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
@@ -133,7 +142,9 @@ export default function DomiciliariosShipdayPage() {
         {showTodayList && (
           <div className="border-t border-border">
             {todayByDriver.length === 0 ? (
-              <p className="text-center py-10 text-sm text-muted-foreground">Aún no hay pedidos entregados hoy.</p>
+              <p className="text-center py-10 text-sm text-muted-foreground">
+                {isToday ? "Aún no hay pedidos entregados hoy." : "No hubo pedidos entregados ese día."}
+              </p>
             ) : (
               <div className="divide-y divide-border">
                 {todayByDriver.map(grp => (
@@ -170,8 +181,8 @@ export default function DomiciliariosShipdayPage() {
                 <tr className="text-muted-foreground text-xs uppercase border-b border-border">
                   <th className="text-left px-5 py-3">Domiciliario</th>
                   <th className="text-left px-5 py-3 hidden md:table-cell">Sucursal</th>
-                  <th className="text-right px-5 py-3">Pedidos hoy</th>
-                  <th className="text-right px-5 py-3 hidden sm:table-cell">$ entregado hoy</th>
+                  <th className="text-right px-5 py-3">Pedidos {isToday ? "hoy" : "ese día"}</th>
+                  <th className="text-right px-5 py-3 hidden sm:table-cell">$ entregado {isToday ? "hoy" : "ese día"}</th>
                   <th className="text-right px-5 py-3">Deuda pendiente</th>
                   <th className="px-5 py-3" />
                 </tr>

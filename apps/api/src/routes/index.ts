@@ -72,6 +72,7 @@ apiRouter.delete("/workers/:id", requireAdmin, asyncHandler(workers.remove));
 
 // ─── Days / Arqueos ───────────────────────────────────────────────────────────
 apiRouter.get("/days", asyncHandler(days.list));
+apiRouter.get("/days/:date/summary", asyncHandler(days.summary));
 apiRouter.get("/days/:date", asyncHandler(days.get));
 apiRouter.put("/days/:date/arqueo", validate(updateArqueoSchema), asyncHandler(days.updateArqueo));
 
@@ -165,6 +166,7 @@ apiRouter.delete("/bank-transactions/:id", requireAdmin, asyncHandler(bankTx.rem
 
 // ─── Cierres de turno ─────────────────────────────────────────────────────────
 apiRouter.get("/shifts", asyncHandler(shiftClose.list));
+apiRouter.get("/shifts/current-date", asyncHandler(shiftClose.currentDate));
 apiRouter.get("/shifts/:date/expected", asyncHandler(shiftClose.expectedForDate));
 apiRouter.get("/shifts/:date", asyncHandler(shiftClose.getForDate));
 apiRouter.post("/shifts", asyncHandler(shiftClose.register));

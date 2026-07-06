@@ -1,5 +1,6 @@
 import { prisma } from "../lib/prisma";
 import { bogotaOpenRange, toBogotaDateStr } from "../lib/date-range";
+import { isBankLinkedPaymentNote, isBankLinkedBaseNote } from "../lib/balance-markers";
 
 export interface UnifiedMovement {
   id: string;
@@ -112,7 +113,7 @@ export async function getUnifiedMovements(params?: { from?: string; to?: string;
       time: hm(t.createdAt),
       _sortKey: t.createdAt.toISOString(),
       type: t.type,
-      medium: "bank",
+      medium: t.medium,
       amount: t.amount,
       description: t.description,
       category: t.type === "ingreso" ? "Ingreso banco" : "Salida banco",
@@ -149,6 +150,9 @@ export async function getUnifiedMovements(params?: { from?: string; to?: string;
 
   // --- Pagos de comisión de domiciliarios (dinero que ENTRA a la empresa) ---
   for (const p of driverPayments) {
+    // Los registrados desde registerPayment llevan el marcador bank-linked:
+    // el bankTransaction ya es el único registro de display para ese pago.
+    if (isBankLinkedPaymentNote(p.notes)) continue;
     result.push({
       id: `dpay-${p.id}`,
       date: iso(p.date),
@@ -170,13 +174,16 @@ export async function getUnifiedMovements(params?: { from?: string; to?: string;
 
   // --- Bases ---
   for (const b of baseTxs) {
+    // Las bases de tipo "pago" generadas por registerPayment llevan marcador bank-linked:
+    // el bankTransaction ya cubre ese flujo. Las entregas y pagos manuales sí se muestran.
+    if (b.type === "pago" && isBankLinkedBaseNote(b.notes)) continue;
     result.push({
       id: `base-${b.id}`,
       date: iso(b.date),
       time: hm(b.date),
       _sortKey: b.date.toISOString(),
       type: b.type === "entrega" ? "egreso" : "ingreso",
-      medium: "cash",
+      medium: b.bankAmount > 0 && b.cashAmount === 0 ? "bank" : "cash",
       amount: b.amount,
       description: `${b.type === "entrega" ? "Base entregada a" : "Base pagada por"} ${b.driver?.name ?? "domiciliario"}${b.notes ? ` — ${b.notes}` : ""}`,
       category: b.type === "entrega" ? "Base entregada" : "Base cobrada",
@@ -198,7 +205,7 @@ export async function getUnifiedMovements(params?: { from?: string; to?: string;
       time: hm(d.paidAt),
       _sortKey: d.paidAt.toISOString(),
       type: "ingreso",
-      medium: "cash",
+      medium: d.paidBank > 0 && d.paidCash === 0 ? "bank" : "cash",
       amount: d.paidAmount ?? d.amount,
       description: `Cobro deuda: ${d.description} — ${d.client?.name ?? "cliente"}`,
       category: "Cobro cliente",

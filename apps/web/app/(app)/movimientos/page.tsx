@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { formatCOP } from "@/lib/format";
+import { formatCOP, prettyDate, todayISO } from "@/lib/format";
 import { Search, TrendingUp, TrendingDown, RefreshCw, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import * as api from "@/lib/sd-api";
@@ -9,6 +9,7 @@ import type { UnifiedMovement } from "@/lib/sd-api";
 import { EditRequestWizard, type EditableField } from "@/components/wizards/EditRequestWizard";
 import { DeleteRequestWizard } from "@/components/wizards/DeleteRequestWizard";
 import { useLive } from "@/lib/use-live";
+import { useDay } from "@/lib/day-context";
 
 type Filter = "all" | "ingreso" | "egreso" | "cash" | "bank";
 type SourceFilter = "all" | "Caja" | "Banco" | "Domiciliarios" | "Bases" | "Clientes" | "Conversión";
@@ -28,24 +29,22 @@ export default function MovimientosPage() {
   const [filter, setFilter] = useState<Filter>("all");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [q, setQ] = useState("");
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
   const [editMov, setEditMov] = useState<UnifiedMovement | null>(null);
   const [deleteMov, setDeleteMov] = useState<UnifiedMovement | null>(null);
+  // Día seleccionado en el sistema (flechas de fecha de la cabecera) — igual que Pedidos.
+  const { date } = useDay();
+  const isToday = date === todayISO();
 
   const load = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const data = await api.getUnifiedMovements({
-        from: fromDate || undefined,
-        to: toDate || undefined,
-      });
+      const data = await api.getUnifiedMovements({ from: date, to: date });
       setMovements(data);
     } catch { if (!silent) toast.error("Error al cargar movimientos"); }
     if (!silent) setLoading(false);
   };
 
-  useEffect(() => { load(); }, [fromDate, toDate]);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [date]);
   useLive(() => load(true), 5000);
 
   const filtered = movements.filter(m => {
@@ -75,12 +74,18 @@ export default function MovimientosPage() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-black">📋 Movimientos</h1>
-          <p className="text-sm text-muted-foreground">Todos los movimientos de dinero del sistema</p>
+          <p className="text-sm text-muted-foreground capitalize">
+            {isToday ? "Hoy" : prettyDate(date)} · movimientos de dinero del sistema
+          </p>
         </div>
         <button onClick={() => load()} className="flex items-center gap-2 px-3 py-2 border border-border rounded-xl text-sm hover:bg-secondary transition">
           <RefreshCw className="h-4 w-4" /> Actualizar
         </button>
       </div>
+
+      <span className="inline-flex text-xs text-muted-foreground items-center gap-1.5 px-3 py-2 rounded-xl bg-secondary/40">
+        📅 Mostrando el día <strong className="capitalize text-foreground">{isToday ? "de hoy" : prettyDate(date)}</strong> — usa las flechas de fecha (arriba) para cambiar de día.
+      </span>
 
       {/* Resumen */}
       <div className="grid grid-cols-3 gap-3">
@@ -124,18 +129,6 @@ export default function MovimientosPage() {
               {s === "all" ? "Todos" : s}
             </button>
           ))}
-        </div>
-
-        {/* Fechas */}
-        <div className="flex gap-2">
-          <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
-            className="px-3 py-2 rounded-xl border border-border bg-background text-sm" />
-          <input type="date" value={toDate} onChange={e => setToDate(e.target.value)}
-            className="px-3 py-2 rounded-xl border border-border bg-background text-sm" />
-          {(fromDate || toDate) && (
-            <button onClick={() => { setFromDate(""); setToDate(""); }}
-              className="px-3 py-2 rounded-xl border border-border text-sm hover:bg-secondary transition">✕</button>
-          )}
         </div>
       </div>
 
