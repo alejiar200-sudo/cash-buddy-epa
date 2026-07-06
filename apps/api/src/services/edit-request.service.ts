@@ -370,13 +370,37 @@ async function applyBaseTransactionChange(baseId: string, newValues: Record<stri
   const base = await prisma.baseTransaction.findUnique({ where: { id: baseId } });
   if (!base) throw new Error("Base no encontrada");
 
-  // Si vienen cashAmount/bankAmount, el total se recalcula a partir de ellos
-  // (a menos que se haya enviado un amount explícito).
-  const newCash = newValues.cashAmount != null ? Number(newValues.cashAmount) : base.cashAmount;
-  const newBank = newValues.bankAmount != null ? Number(newValues.bankAmount) : base.bankAmount;
-  const newAmount = newValues.amount != null
-    ? Number(newValues.amount)
-    : (newValues.cashAmount != null || newValues.bankAmount != null ? newCash + newBank : base.amount);
+  let newCash: number;
+  let newBank: number;
+  let newAmount: number;
+
+  if (newValues.cashAmount != null || newValues.bankAmount != null) {
+    // Se editó el split efectivo/banco directamente: el total se recalcula a partir de él.
+    newCash = newValues.cashAmount != null ? Number(newValues.cashAmount) : base.cashAmount;
+    newBank = newValues.bankAmount != null ? Number(newValues.bankAmount) : base.bankAmount;
+    newAmount = newCash + newBank;
+  } else if (newValues.amount != null) {
+    // Se editó solo el total (campo genérico "Valor" del formulario de edición). Hay
+    // que reescalar cashAmount/bankAmount proporcionalmente al nuevo total — si se
+    // dejan como estaban, el saldo de banco/efectivo (que usa cashAmount/bankAmount,
+    // NO amount) queda descuadrado con el valor ya corregido. Bug real: una entrega
+    // de $1.000.000 corregida a $100.000 dejó bankAmount en $1.000.000, y el saldo
+    // de banco seguía reflejando el monto viejo aunque la deuda ya estaba bien.
+    newAmount = Number(newValues.amount);
+    const oldTotal = base.cashAmount + base.bankAmount;
+    if (oldTotal > 0) {
+      newBank = Math.round(base.bankAmount * (newAmount / oldTotal));
+      newCash = newAmount - newBank;
+    } else {
+      newCash = newAmount;
+      newBank = 0;
+    }
+  } else {
+    newCash = base.cashAmount;
+    newBank = base.bankAmount;
+    newAmount = base.amount;
+  }
+
   const delta = newAmount - base.amount;
 
   await prisma.$transaction(async (tx) => {

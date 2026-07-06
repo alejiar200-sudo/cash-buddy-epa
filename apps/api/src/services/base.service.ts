@@ -19,9 +19,34 @@ export async function removeBase(id: string) {
 export async function editBase(id: string, input: { cashAmount?: number; bankAmount?: number; amount?: number; notes?: string }) {
   const base = await prisma.baseTransaction.findUnique({ where: { id } });
   if (!base) throw notFound("Base no encontrada");
-  const cashAmount = Math.round(input.cashAmount ?? base.cashAmount);
-  const bankAmount = Math.round(input.bankAmount ?? base.bankAmount);
-  const newAmount = (cashAmount + bankAmount) || Math.round(input.amount ?? base.amount);
+
+  let cashAmount: number;
+  let bankAmount: number;
+  let newAmount: number;
+
+  if (input.cashAmount != null || input.bankAmount != null) {
+    cashAmount = Math.round(input.cashAmount ?? base.cashAmount);
+    bankAmount = Math.round(input.bankAmount ?? base.bankAmount);
+    newAmount = cashAmount + bankAmount;
+  } else if (input.amount != null) {
+    // Solo se editó el total: reescalar cashAmount/bankAmount proporcionalmente para
+    // que sigan sumando el nuevo total (si no, el saldo de banco/efectivo, que usa
+    // cashAmount/bankAmount y no amount, queda desincronizado del valor corregido).
+    newAmount = Math.round(input.amount);
+    const oldTotal = base.cashAmount + base.bankAmount;
+    if (oldTotal > 0) {
+      bankAmount = Math.round(base.bankAmount * (newAmount / oldTotal));
+      cashAmount = newAmount - bankAmount;
+    } else {
+      cashAmount = newAmount;
+      bankAmount = 0;
+    }
+  } else {
+    cashAmount = base.cashAmount;
+    bankAmount = base.bankAmount;
+    newAmount = base.amount;
+  }
+
   if (newAmount <= 0) throw badRequest("El monto debe ser mayor a 0");
   const delta = newAmount - base.amount;
   const sign = base.type === "entrega" ? 1 : -1; // entrega suma deuda; pago resta
