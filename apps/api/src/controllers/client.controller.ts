@@ -25,9 +25,10 @@ export async function remove(req: Request, res: Response) {
 }
 
 export async function addDebt(req: Request, res: Response) {
-  const { description, amount, date } = req.body;
+  const { description, amount, date, medium } = req.body;
   const actor = getActor(req);
-  res.status(201).json(await svc.addDebt(req.params.id, description, amount, date, actor));
+  const med = medium === "cash" || medium === "bank" ? medium : null;
+  res.status(201).json(await svc.addDebt(req.params.id, description, amount, date, actor, med));
 }
 
 export async function payDebt(req: Request, res: Response) {

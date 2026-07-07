@@ -76,8 +76,21 @@ export async function getDay(date: string): Promise<DayData> {
     include: { movements: { orderBy: { createdAt: "asc" } } },
   });
   if (day) return toDayData(day);
-  // No persiste si no existe: devuelve un día efímero con saldos por defecto.
-  return ensureDay(date);
+  // No persiste si no existe: devuelve un día EFÍMERO (calculado) con el saldo de
+  // apertura arrastrado, SIN crear el registro. Antes llamaba a ensureDay, que sí
+  // persistía, y con solo consultar/navegar un día vacío (pasado o futuro) lo creaba
+  // y luego aparecía con datos en el Historial/calendario. Las escrituras (arqueo,
+  // movimientos) siguen llamando a ensureDay por su cuenta cuando hace falta.
+  const opening = await getOpeningBalance(date);
+  return {
+    date,
+    initialCash: opening.cash,
+    initialBank: opening.bank,
+    movements: [],
+    arqueoAM: null,
+    arqueoPM: null,
+    arqueoClose: null,
+  };
 }
 
 export async function listDays(): Promise<DayData[]> {
@@ -103,7 +116,19 @@ export async function listDays(): Promise<DayData[]> {
  * información no afecta ese semáforo.
  */
 export async function getDaySummary(date: string) {
-  const day = await getDay(date);
+  // READ-ONLY: NO usar getDay/ensureDay aquí — eso CREARÍA el día (persiste un Day con
+  // el saldo arrastrado del día anterior), y entonces días vacíos —pasados o futuros—
+  // aparecían con "información que no existe" (saldo heredado) en el Historial y hasta
+  // ensuciaban el calendario. Aquí solo se LEE: si el día no existe, movimientos=[] y
+  // el saldo de apertura se calcula sin persistir nada.
+  const dayRecord = await prisma.day.findUnique({
+    where: { date },
+    include: { movements: { orderBy: { createdAt: "asc" } } },
+  });
+  const movements = dayRecord?.movements ?? [];
+  const opening = dayRecord
+    ? { cash: dayRecord.initialCash, bank: dayRecord.initialBank }
+    : await getOpeningBalance(date);
   const range = bogotaDayRange(date);
 
   const [bankTxs, driverPayments, bases, clientDebtsPaid, clientDebtsGenAgg, orders, closeShift] = await Promise.all([
@@ -119,7 +144,7 @@ export async function getDaySummary(date: string) {
   let cashIn = 0, cashOut = 0, bankIn = 0, bankOut = 0;
   let gastos = 0, nomina = 0;
 
-  for (const m of day.movements) {
+  for (const m of movements) {
     if (m.status !== "confirmed") continue;
     if (m.medium === "cash") { if (m.type === "ingreso") cashIn += m.amount; else cashOut += m.amount; }
     else { if (m.type === "ingreso") bankIn += m.amount; else bankOut += m.amount; }
@@ -152,17 +177,30 @@ export async function getDaySummary(date: string) {
   const deudasGeneradas = clientDebtsGenAgg._sum.amount ?? 0;
   const deudasCobradas = clientDebtsPaid.reduce((s, cp) => s + (cp.paidAmount ?? cp.paidCash + cp.paidBank), 0);
 
-  const finalCash = day.initialCash + cashIn - cashOut;
-  const finalBank = day.initialBank + bankIn - bankOut;
+  const finalCash = opening.cash + cashIn - cashOut;
+  const finalBank = opening.bank + bankIn - bankOut;
 
   // El semáforo de "caja cuadrada" depende EXCLUSIVAMENTE del Cierre del día.
   const cajaCuadrada = !!closeShift && closeShift.difference === 0 && (closeShift.bankDifference == null || closeShift.bankDifference === 0);
 
+  // ¿Hubo ALGO ese día? Si no (día vacío, pasado o futuro), el Historial lo muestra
+  // vacío en vez del saldo arrastrado. El saldo de apertura NO cuenta como actividad.
+  const hasActivity =
+    movements.length > 0 ||
+    bankTxs.length > 0 ||
+    driverPayments.length > 0 ||
+    bases.length > 0 ||
+    clientDebtsPaid.length > 0 ||
+    orders.length > 0 ||
+    (clientDebtsGenAgg._sum.amount ?? 0) > 0 ||
+    !!closeShift;
+
   return {
     date,
-    initialCash: day.initialCash,
-    initialBank: day.initialBank,
-    initialTotal: day.initialCash + day.initialBank,
+    hasActivity,
+    initialCash: opening.cash,
+    initialBank: opening.bank,
+    initialTotal: opening.cash + opening.bank,
     ingresos: cashIn + bankIn,
     egresos: cashOut + bankOut,
     comision,

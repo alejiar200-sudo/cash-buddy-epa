@@ -145,6 +145,17 @@ function DayDetail({ date }: { date: string }) {
 
   if (!summary) return <div className="text-center py-8 text-sm text-muted-foreground">Cargando…</div>;
 
+  // Día sin ninguna actividad: no se inventa saldo arrastrado, se muestra vacío.
+  if (!summary.hasActivity) {
+    return (
+      <div className="text-center py-10 space-y-2">
+        <div className="text-4xl">📭</div>
+        <p className="font-bold">Día sin movimientos</p>
+        <p className="text-sm text-muted-foreground">No se registró nada este día.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3 tnum text-sm">
       {/* El único criterio de "cuadró": el Cierre registrado ese día. */}

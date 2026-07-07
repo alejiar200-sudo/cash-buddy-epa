@@ -75,7 +75,7 @@ async function getExpectedBalances(today: string, todayRange: { gte: Date; lte: 
   }
   const cumRange = { gte: periodStart, lte: todayRange.lte };
 
-  const [movements, bankTxs, convs, driverPayments, bases, clientPays] = await Promise.all([
+  const [movements, bankTxs, convs, driverPayments, bases, clientPays, clientDebtsOut] = await Promise.all([
     // Caja: se cuentan los movimientos REGISTRADOS después del cierre (por createdAt).
     prisma.movement.findMany({ where: { createdAt: cumRange, status: "confirmed" }, select: { type: true, medium: true, amount: true } }),
     prisma.bankTransaction.findMany({ where: { date: cumRange }, select: { type: true, medium: true, amount: true } }),
@@ -83,6 +83,10 @@ async function getExpectedBalances(today: string, todayRange: { gte: Date; lte: 
     prisma.driverPayment.findMany({ where: { date: cumRange }, select: { medium: true, amount: true, notes: true } }),
     prisma.baseTransaction.findMany({ where: { date: cumRange }, select: { type: true, cashAmount: true, bankAmount: true, amount: true, notes: true } }),
     prisma.clientDebt.findMany({ where: { paidAt: cumRange }, select: { paidCash: true, paidBank: true } }),
+    // Deudas creadas en el período que SÍ desembolsaron dinero (préstamo/adelanto):
+    // el dinero salió del medio elegido al crearlas. Se descuenta aquí; el reingreso
+    // al cobrar ya lo cubre `clientPays` (paidCash/paidBank).
+    prisma.clientDebt.findMany({ where: { createdAt: cumRange, medium: { not: null } }, select: { amount: true, medium: true } }),
   ]);
 
   // Gastos/nómina del sistema original (solo confirmados)
@@ -125,6 +129,11 @@ async function getExpectedBalances(today: string, todayRange: { gte: Date; lte: 
   for (const cp of clientPays) {
     baseCash += cp.paidCash;
     baseBank += cp.paidBank;
+  }
+  // Desembolso al CREAR una deuda con medio (préstamo): el dinero sale de ese medio.
+  for (const d of clientDebtsOut) {
+    if (d.medium === "cash") baseCash -= d.amount;
+    else if (d.medium === "bank") baseBank -= d.amount;
   }
 
   return { cash: baseCash, bank: baseBank };

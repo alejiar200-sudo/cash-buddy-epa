@@ -594,6 +594,7 @@ export interface ClientDebt {
   clientId: string;
   description: string;
   amount: number;
+  medium?: "cash" | "bank" | null;
   paid: boolean;
   paidAt?: string;
   paidAmount?: number;
@@ -604,15 +605,15 @@ export const getClients = (active?: boolean) =>
   apiFetch<Client[]>(`/clients${active ? "?active=true" : ""}`);
 export const getClient = (id: string) => apiFetch<Client>(`/clients/${id}`);
 export const getDebtors = () => apiFetch<Client[]>("/clients/debtors");
-export const createClient = (data: Partial<Client> & { initialDebt?: number; initialDebtDescription?: string }) =>
+export const createClient = (data: Partial<Client> & { initialDebt?: number; initialDebtDescription?: string; initialDebtMedium?: "cash" | "bank" }) =>
   apiFetch<Client>("/clients", { method: "POST", body: JSON.stringify(data) });
 export const updateClient = (id: string, data: Partial<Client>) =>
   apiFetch<Client>(`/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) });
 export const deleteClient = (id: string) =>
   apiFetch<void>(`/clients/${id}`, { method: "DELETE" });
-export const addClientDebt = (clientId: string, description: string, amount: number, date?: string) =>
+export const addClientDebt = (clientId: string, description: string, amount: number, date?: string, medium?: "cash" | "bank") =>
   apiFetch<ClientDebt>(`/clients/${clientId}/debt`, {
-    method: "POST", body: JSON.stringify({ description, amount, date }),
+    method: "POST", body: JSON.stringify({ description, amount, date, medium }),
   });
 export const payClientDebt = (debtId: string, paidAmount?: number) =>
   apiFetch<{ ok: boolean }>(`/clients/debts/${debtId}/pay`, {
@@ -742,6 +743,8 @@ export const getShiftsForDate = (date: string) => apiFetch<ShiftClose[]>(`/shift
 
 export interface DaySummary {
   date: string;
+  /** false = día sin ninguna actividad (movimientos/cierre/pedidos/deudas): se muestra vacío. */
+  hasActivity: boolean;
   initialCash: number;
   initialBank: number;
   initialTotal: number;

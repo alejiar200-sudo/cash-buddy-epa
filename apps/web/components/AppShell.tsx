@@ -4,14 +4,14 @@ import { useState, type ReactNode } from "react";
 import { Sidebar } from "./Sidebar";
 import { useDay } from "@/lib/day-context";
 import { useStore } from "@/lib/store";
-import { prettyDate, shiftDate, todayISO } from "@/lib/format";
+import { prettyDate, shiftDate } from "@/lib/format";
 import { ChevronLeft, ChevronRight, Sunrise, Lock, Menu, X, UserCircle2 } from "lucide-react";
 import { WelcomeWizard } from "./wizards/WelcomeWizard";
 import { TermsGate } from "./TermsGate";
 import { useAuth } from "@/lib/auth";
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { date, setDate } = useDay();
+  const { date, setDate, operatingDay } = useDay();
   const { state, loading, getDay } = useStore();
   const { user } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -33,7 +33,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     return <TermsGate />;
   }
 
-  const isToday = date === todayISO();
+  // "Día en curso" = el día OPERATIVO (avanza al hacer el Cierre), no la fecha calendario.
+  const isToday = date === operatingDay;
   const day = getDay(date);
   const dayExists = !!state.days[date];
 

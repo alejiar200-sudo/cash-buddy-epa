@@ -5,7 +5,7 @@ import { RefreshCw, AlertCircle, Wallet, Banknote, Package, ChevronDown, Chevron
 import { toast } from "sonner";
 import * as api from "@/lib/sd-api";
 import type { Driver, Branch, Order } from "@/lib/sd-api";
-import { formatCOP, prettyDate, todayISO } from "@/lib/format";
+import { formatCOP, prettyDate } from "@/lib/format";
 import { useDay } from "@/lib/day-context";
 import { DriverStatementModal } from "@/components/DriverStatementModal";
 import { LiveBadge } from "@/components/LiveBadge";
@@ -20,8 +20,8 @@ export default function DomiciliariosShipdayPage() {
   const [showTodayList, setShowTodayList] = useState(true);
   const [search, setSearch] = useState("");
   // Día seleccionado en el sistema (flechas de fecha de la cabecera) — igual que Pedidos.
-  const { date } = useDay();
-  const isToday = date === todayISO();
+  const { date, operatingDay } = useDay();
+  const isToday = date === operatingDay;
 
   // Carga completa (con spinner) — incluye sucursales
   const load = async () => {

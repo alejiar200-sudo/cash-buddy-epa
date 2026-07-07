@@ -10,7 +10,7 @@ import { DeleteRequestWizard } from "@/components/wizards/DeleteRequestWizard";
 import { useLive } from "@/lib/use-live";
 import { useAuth } from "@/lib/auth";
 import { useDay } from "@/lib/day-context";
-import { formatCOP as _fmt, prettyDate, todayISO } from "@/lib/format";
+import { formatCOP as _fmt, prettyDate } from "@/lib/format";
 
 function formatCOP(n: number) { return _fmt ? _fmt(n) : "$" + n.toLocaleString("es-CO"); }
 function fmtDate(iso: string) {
@@ -77,8 +77,8 @@ export default function BancoPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   // Día seleccionado en el sistema (flechas de fecha de la cabecera) — igual que Pedidos.
-  const { date } = useDay();
-  const isToday = date === todayISO();
+  const { date, operatingDay } = useDay();
+  const isToday = date === operatingDay;
 
   // `silent` = refresco en vivo: sin spinner y sin re-render si nada cambió (evita parpadeo).
   const load = async (silent = false) => {

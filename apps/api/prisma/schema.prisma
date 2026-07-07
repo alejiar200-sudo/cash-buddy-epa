@@ -431,6 +431,12 @@ model ClientDebt {
   clientId      String
   description   String
   amount        Int
+  // Medio del que SALIÓ el dinero al crear la deuda (préstamo/adelanto al cliente).
+  // Cuando está definido, el saldo esperado descuenta `amount` de ese medio al
+  // crearse la deuda y lo vuelve a sumar (paidCash/paidBank) al cobrarse — neto cero
+  // al saldarse. Nulo = deuda sin desembolso de caja (p. ej. domicilio a crédito):
+  // no descuenta al crear, solo suma como ingreso al cobrarse.
+  medium        Medium?
   paid          Boolean   @default(false)
   paidAt        DateTime?
   paidAmount    Int?

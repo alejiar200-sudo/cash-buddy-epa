@@ -231,6 +231,10 @@ export async function applyBankToDriver(
         data: {
           driverId,
           driverName: driver.name,
+          // noCounterpart: marca este movimiento como "aplicado a la deuda/crédito del
+          // domiciliario", para que al eliminarlo se revierta ese efecto (igual que
+          // registerPayment). Sin esto, borrar el movimiento dejaba el crédito fantasma.
+          noCounterpart: true,
           description: `${bankTx.description} · Abonado al crédito de ${driver.name} (${formatCOP(amount)})`,
         },
       }),
@@ -306,6 +310,9 @@ export async function applyBankToDriver(
       data: {
         driverId,
         driverName: driver.name,
+        // Ver nota en la rama de crédito: marca el movimiento como aplicado a la
+        // deuda del domiciliario para poder revertirlo al eliminarlo.
+        noCounterpart: true,
         description: `${bankTx.description} · Descontado de la deuda de ${driver.name}${detalle}${sobrante}`,
       },
     });

@@ -6,7 +6,7 @@ import { useLive } from "@/lib/use-live";
 import { toast } from "sonner";
 import * as api from "@/lib/sd-api";
 import type { Driver, Branch, BaseTransaction } from "@/lib/sd-api";
-import { formatCOP, prettyDate, todayISO } from "@/lib/format";
+import { formatCOP, prettyDate } from "@/lib/format";
 import { useDay } from "@/lib/day-context";
 import { useAuth } from "@/lib/auth";
 import { EditRequestWizard, type EditableField } from "@/components/wizards/EditRequestWizard";
@@ -30,8 +30,8 @@ export default function BasesPage() {
   const [deleteBaseReq, setDeleteBaseReq] = useState<BaseTransaction | null>(null);
   const [saving, setSaving] = useState(false);
   // Día seleccionado en el sistema (flechas de fecha de la cabecera) — igual que Pedidos.
-  const { date } = useDay();
-  const isToday = date === todayISO();
+  const { date, operatingDay } = useDay();
+  const isToday = date === operatingDay;
 
   const load = async (silent = false) => {
     if (!silent) setLoading(true);

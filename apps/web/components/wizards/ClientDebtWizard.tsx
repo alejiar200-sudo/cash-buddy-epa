@@ -25,9 +25,10 @@ export function ClientDebtWizard({ open, onOpenChange, mode, client, debt, onDon
   const [amount, setAmount] = useState(0);
   const [debtDate, setDebtDate] = useState(() => todayBogota());
   const [payMedium, setPayMedium] = useState<"cash" | "bank">("cash");
+  const [debtMedium, setDebtMedium] = useState<"cash" | "bank">("cash");
   const [saving, setSaving] = useState(false);
 
-  function reset() { setStep(1); setName(""); setPhone(""); setDescription(""); setAmount(0); setPayMedium("cash"); setDebtDate(todayBogota()); }
+  function reset() { setStep(1); setName(""); setPhone(""); setDescription(""); setAmount(0); setPayMedium("cash"); setDebtMedium("cash"); setDebtDate(todayBogota()); }
   function close() { onOpenChange(false); setTimeout(reset, 250); }
 
   const totalSteps = mode === "new_client" ? 3 : mode === "add_debt" ? 3 : 2;
@@ -49,6 +50,7 @@ export function ClientDebtWizard({ open, onOpenChange, mode, client, debt, onDon
         phone: phone || undefined,
         initialDebt: amount > 0 ? amount : undefined,
         initialDebtDescription: description.trim() || undefined,
+        initialDebtMedium: amount > 0 ? debtMedium : undefined,
       });
       toast.success(`✅ Cliente "${name}" registrado${amount > 0 ? ` con deuda de $${amount.toLocaleString("es-CO")}` : ""}`);
       onDone?.(); close();
@@ -60,7 +62,7 @@ export function ClientDebtWizard({ open, onOpenChange, mode, client, debt, onDon
     if (!client) return;
     setSaving(true);
     try {
-      await api.addClientDebt(client.id, description, amount, debtDate);
+      await api.addClientDebt(client.id, description, amount, debtDate, debtMedium);
       toast.success(`✅ Deuda de $${amount.toLocaleString("es-CO")} añadida a ${client.name}`);
       onDone?.(); close();
     } catch (err) { toast.error(String(err)); }
@@ -110,6 +112,21 @@ export function ClientDebtWizard({ open, onOpenChange, mode, client, debt, onDon
             placeholder="Concepto de la deuda (ej: Domicilio del lunes)"
             className="w-full glass-strong rounded-2xl px-5 py-3 text-base outline-none focus:ring-2 focus:ring-primary/40" />
           <MoneyInput value={amount} onChange={setAmount} />
+          {amount > 0 && (
+            <div>
+              <label className="text-xs text-muted-foreground font-medium">¿De dónde sale el dinero?</label>
+              <div className="grid grid-cols-2 gap-2 mt-1">
+                <button type="button" onClick={() => setDebtMedium("cash")}
+                  className={`p-3 rounded-xl border-2 text-sm font-bold transition ${debtMedium === "cash" ? "border-primary bg-primary/10" : "border-border bg-secondary/40"}`}>
+                  💵 Efectivo
+                </button>
+                <button type="button" onClick={() => setDebtMedium("bank")}
+                  className={`p-3 rounded-xl border-2 text-sm font-bold transition ${debtMedium === "bank" ? "border-blue-500 bg-blue-500/10 text-blue-600" : "border-border bg-secondary/40"}`}>
+                  🏦 Transferencia
+                </button>
+              </div>
+            </div>
+          )}
           <button onClick={() => setStep(3)}
             className="w-full bg-primary text-primary-foreground font-bold py-4 rounded-2xl shadow-cash">
             {amount > 0 ? "Siguiente →" : "Sin deuda inicial →"}
@@ -125,6 +142,7 @@ export function ClientDebtWizard({ open, onOpenChange, mode, client, debt, onDon
               <hr className="border-border" />
               <Row label="Primera deuda" value={description} />
               <Row label="Monto" value={`$${amount.toLocaleString("es-CO")}`} highlight />
+              <Row label="Sale de" value={debtMedium === "cash" ? "💵 Efectivo" : "🏦 Transferencia"} />
             </>}
           </div>
           <button disabled={saving} onClick={submitNewClient}
@@ -149,6 +167,21 @@ export function ClientDebtWizard({ open, onOpenChange, mode, client, debt, onDon
       {mode === "add_debt" && step === 2 && (
         <div className="space-y-4">
           <MoneyInput value={amount} onChange={setAmount} autoFocus />
+          {/* Medio del que sale el dinero prestado */}
+          <div>
+            <label className="text-xs text-muted-foreground font-medium">¿De dónde sale el dinero?</label>
+            <div className="grid grid-cols-2 gap-2 mt-1">
+              <button type="button" onClick={() => setDebtMedium("cash")}
+                className={`p-3 rounded-xl border-2 text-sm font-bold transition ${debtMedium === "cash" ? "border-primary bg-primary/10" : "border-border bg-secondary/40"}`}>
+                💵 Efectivo
+              </button>
+              <button type="button" onClick={() => setDebtMedium("bank")}
+                className={`p-3 rounded-xl border-2 text-sm font-bold transition ${debtMedium === "bank" ? "border-blue-500 bg-blue-500/10 text-blue-600" : "border-border bg-secondary/40"}`}>
+                🏦 Transferencia
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">Se descontará del {debtMedium === "cash" ? "efectivo" : "banco"} al registrar la deuda.</p>
+          </div>
           <div>
             <label className="text-xs text-muted-foreground font-medium">Fecha de la deuda</label>
             <input type="date" value={debtDate} max={todayBogota()}
@@ -167,6 +200,7 @@ export function ClientDebtWizard({ open, onOpenChange, mode, client, debt, onDon
             <Row label="Cliente" value={client?.name ?? ""} />
             <Row label="Concepto" value={description} />
             <Row label="Monto" value={`$${amount.toLocaleString("es-CO")}`} highlight />
+            <Row label="Sale de" value={debtMedium === "cash" ? "💵 Efectivo" : "🏦 Transferencia"} />
             <Row label="Deuda actual" value={`$${(client?.pendingDebt ?? 0).toLocaleString("es-CO")}`} />
             <Row label="Nueva deuda total" value={`$${((client?.pendingDebt ?? 0) + amount).toLocaleString("es-CO")}`} highlight />
           </div>

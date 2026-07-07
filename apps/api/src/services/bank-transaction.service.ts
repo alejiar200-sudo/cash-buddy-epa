@@ -119,10 +119,21 @@ export async function remove(id: string) {
       // deuda y limpiar los registros contables subsidiarios que se crearon junto
       // a él — igual que hace edit-request.service.ts al aprobar una eliminación.
       if (row.driverId && row.noCounterpart && row.type === "ingreso") {
-        await tx.driver.update({
-          where: { id: row.driverId },
-          data: { pendingDebt: { increment: row.amount } },
-        });
+        // Revertir por POSICIÓN NETA (deuda − crédito): ver nota en
+        // edit-request.service.ts. Restaura pendingDebt o creditAmount según
+        // corresponda, sin dejar crédito por sobrepago fantasma.
+        const drv = await tx.driver.findUnique({ where: { id: row.driverId } });
+        if (drv) {
+          const net = (drv.pendingDebt - (drv.creditAmount ?? 0)) + row.amount;
+          await tx.driver.update({
+            where: { id: row.driverId },
+            data: {
+              pendingDebt: net > 0 ? net : 0,
+              creditAmount: net < 0 ? -net : 0,
+              creditMedium: net < 0 ? drv.creditMedium : null,
+            },
+          });
+        }
         // Búsqueda por ID (bankTransactionId), sin ambigüedad. Se mantiene un
         // respaldo por ventana de fecha ±5s SOLO para registros viejos creados
         // antes de que existiera el enlace directo (bankTransactionId=null) —

@@ -37,7 +37,8 @@ export async function getUnifiedMovements(params?: { from?: string; to?: string;
     conversions,
     driverPayments,
     baseTxs,
-    clientDebts,
+    clientDebtsPaid,
+    clientDebtsCreated,
   ] = await Promise.all([
     // Sistema original (movimientos de caja)
     prisma.movement.findMany({
@@ -73,11 +74,18 @@ export async function getUnifiedMovements(params?: { from?: string; to?: string;
       orderBy: { date: "desc" },
       take: params?.limit ?? 300,
     }),
-    // Deudas de clientes pagadas
+    // Cobros de deudas de clientes (total O parcial): basta con que tengan paidAt.
     prisma.clientDebt.findMany({
-      where: { paid: true, ...(dateWhere ? { paidAt: dateWhere } : {}) },
+      where: dateWhere ? { paidAt: dateWhere } : { paidAt: { not: null } },
       include: { client: { select: { name: true } } },
       orderBy: { paidAt: "desc" },
+      take: params?.limit ?? 200,
+    }),
+    // Deudas creadas CON medio (desembolso al cliente): se muestran como egreso.
+    prisma.clientDebt.findMany({
+      where: { medium: { not: null }, ...(dateWhere ? { createdAt: dateWhere } : {}) },
+      include: { client: { select: { name: true } } },
+      orderBy: { createdAt: "desc" },
       take: params?.limit ?? 200,
     }),
   ]);
@@ -196,8 +204,29 @@ export async function getUnifiedMovements(params?: { from?: string; to?: string;
     });
   }
 
-  // --- Deudas de clientes pagadas ---
-  for (const d of clientDebts) {
+  // --- Creación de deudas con medio (dinero que SALE al cliente) ---
+  for (const d of clientDebtsCreated) {
+    result.push({
+      id: `cdebt-out-${d.id}`,
+      date: iso(d.createdAt),
+      time: hm(d.createdAt),
+      _sortKey: d.createdAt.toISOString(),
+      type: "egreso",
+      medium: d.medium === "bank" ? "bank" : "cash",
+      amount: d.amount,
+      description: `Deuda registrada: ${d.description} — ${d.client?.name ?? "cliente"}`,
+      category: "Deuda cliente",
+      source: "Clientes",
+      relatedName: d.client?.name,
+      createdByName: d.createdByName,
+      entityType: "ClientDebt",
+      entityId: d.id,
+      editableDescription: false,
+    });
+  }
+
+  // --- Cobros de deudas de clientes (total o parcial) ---
+  for (const d of clientDebtsPaid) {
     if (!d.paidAt) continue;
     result.push({
       id: `cdebt-${d.id}`,
@@ -212,7 +241,9 @@ export async function getUnifiedMovements(params?: { from?: string; to?: string;
       source: "Clientes",
       relatedName: d.client?.name,
       createdByName: d.paidByName ?? d.createdByName,
-      entityType: "ClientDebt",
+      // Tipo propio (no "ClientDebt"): al eliminar este movimiento se REVIERTE el
+      // cobro y la deuda vuelve a su valor real, en vez de borrar la deuda entera.
+      entityType: "ClientDebtPayment",
       entityId: d.id,
       editableDescription: false,
     });

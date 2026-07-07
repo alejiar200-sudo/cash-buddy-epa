@@ -25,22 +25,27 @@ function addDays(dateStr: string, days: number): string {
 }
 
 /**
- * Día "operativo" actual para efectos de Caja: el día siguiente al último
- * Cierre (shift "close") registrado, SIN importar cuántos días calendario
- * hayan pasado. Antes se usaba la fecha calendario de hoy, y un cierre hecho
- * después de medianoche (p. ej. 00:30 del día siguiente) ya no encontraba el
- * día anterior disponible para cerrarlo — el día se "cerraba solo" al pasar
- * de fecha en vez de cuando el usuario realmente hacía el cierre.
+ * Día "operativo" actual para efectos de Caja. Es MANUAL, no automático por zona
+ * horaria: es el día siguiente al último Cierre (shift "close") registrado, sin
+ * importar la hora ni la fecha calendario.
+ *
+ * - Al registrar el Cierre del día, el sistema avanza DE INMEDIATO al día
+ *   siguiente (que queda desbloqueado), sea la hora que sea. Ya no espera a que
+ *   cambie la medianoche.
+ * - Mientras no se registre el Cierre, el día operativo NO avanza (aunque pase la
+ *   medianoche), así que el día anterior sigue disponible para cerrarlo.
+ * - Si nunca se ha cerrado, arranca con el día calendario de Bogotá.
+ *
+ * Antes se limitaba con `next <= today ? next : today`, y ese tope por fecha
+ * calendario impedía pasar de día tras el cierre hasta la medianoche.
  */
 export async function getCurrentOperatingDate(): Promise<string> {
-  const today = todayBogota();
   const lastClose = await prisma.shiftClose.findFirst({
     where: { shift: "close" },
     orderBy: { date: "desc" },
   });
-  if (!lastClose) return today;
-  const next = addDays(lastClose.date, 1);
-  return next <= today ? next : today;
+  if (!lastClose) return todayBogota();
+  return addDays(lastClose.date, 1);
 }
 
 export async function getShift(date: string, shift: "AM" | "PM" | "close") {

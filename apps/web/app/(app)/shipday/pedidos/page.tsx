@@ -8,7 +8,7 @@ import { DeleteRequestWizard } from "@/components/wizards/DeleteRequestWizard";
 import { toast } from "sonner";
 import * as api from "@/lib/sd-api";
 import type { Order, Branch, Driver } from "@/lib/sd-api";
-import { formatCOP, prettyDate, todayISO } from "@/lib/format";
+import { formatCOP, prettyDate } from "@/lib/format";
 import { LiveBadge } from "@/components/LiveBadge";
 import { useAuth } from "@/lib/auth";
 import { useDay } from "@/lib/day-context";
@@ -25,8 +25,8 @@ export default function PedidosPage() {
   const { user } = useAuth();
   const [showWebhook, setShowWebhook] = useState(false);
   // Día seleccionado en el sistema (flechas de fecha de la cabecera).
-  const { date } = useDay();
-  const isToday = date === todayISO();
+  const { date, operatingDay } = useDay();
+  const isToday = date === operatingDay;
 
   // Trae SOLO los pedidos del día seleccionado (no se sobrecarga).
   const fetchOrders = (silent = false) => {

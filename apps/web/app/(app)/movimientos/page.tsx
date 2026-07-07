@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { formatCOP, prettyDate, todayISO } from "@/lib/format";
+import { formatCOP, prettyDate } from "@/lib/format";
 import { Search, TrendingUp, TrendingDown, RefreshCw, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import * as api from "@/lib/sd-api";
@@ -32,8 +32,8 @@ export default function MovimientosPage() {
   const [editMov, setEditMov] = useState<UnifiedMovement | null>(null);
   const [deleteMov, setDeleteMov] = useState<UnifiedMovement | null>(null);
   // Día seleccionado en el sistema (flechas de fecha de la cabecera) — igual que Pedidos.
-  const { date } = useDay();
-  const isToday = date === todayISO();
+  const { date, operatingDay } = useDay();
+  const isToday = date === operatingDay;
 
   const load = async (silent = false) => {
     if (!silent) setLoading(true);

@@ -128,10 +128,22 @@ async function deleteEntity(entityType: string, entityId: string) {
         // y limpiar los registros contables subsidiarios (BaseTransaction + DriverPayment
         // bank-linked) que se crearon junto a este bankTransaction.
         if (bankTx.driverId && bankTx.noCounterpart && bankTx.type === "ingreso") {
-          await tx.driver.update({
-            where: { id: bankTx.driverId },
-            data: { pendingDebt: { increment: bankTx.amount } },
-          });
+          // Revertir por POSICIÓN NETA (deuda − crédito): el ingreso redujo esa posición
+          // en `amount`; al borrarlo se restaura y se re-normaliza en pendingDebt o
+          // creditAmount. Antes solo se sumaba a pendingDebt y el crédito por sobrepago
+          // quedaba como saldo fantasma ("la empresa le debe" que no desaparecía).
+          const drv = await tx.driver.findUnique({ where: { id: bankTx.driverId } });
+          if (drv) {
+            const net = (drv.pendingDebt - (drv.creditAmount ?? 0)) + bankTx.amount;
+            await tx.driver.update({
+              where: { id: bankTx.driverId },
+              data: {
+                pendingDebt: net > 0 ? net : 0,
+                creditAmount: net < 0 ? -net : 0,
+                creditMedium: net < 0 ? drv.creditMedium : null,
+              },
+            });
+          }
           // Búsqueda por ID (bankTransactionId); respaldo por ventana de fecha ±5s
           // solo para registros viejos sin el enlace directo. Ver comentario en
           // bank-transaction.service.ts::remove().
@@ -187,14 +199,47 @@ async function deleteEntity(entityType: string, entityId: string) {
       const debt = await prisma.clientDebt.findUnique({ where: { id: entityId } });
       if (!debt) return;
       await prisma.$transaction(async (tx) => {
-        // Si la deuda estaba pendiente, restarla del saldo del cliente
-        if (!debt.paid) {
+        // Restar del saldo del cliente SOLO lo que aún quedaba pendiente de esta deuda
+        // (monto menos lo ya abonado). Si estaba 100% pagada, no resta nada. Antes se
+        // restaba el monto completo salvo que estuviera pagada, lo que descuadraba las
+        // deudas con abonos parciales.
+        const stillOwed = debt.amount - (debt.paidAmount ?? 0);
+        if (stillOwed > 0) {
           await tx.client.update({
             where: { id: debt.clientId },
-            data: { pendingDebt: { decrement: debt.amount } },
+            data: { pendingDebt: { decrement: stillOwed } },
           });
         }
         await tx.clientDebt.delete({ where: { id: entityId } });
+      });
+      break;
+    }
+    case "ClientDebtPayment": {
+      // Eliminar el COBRO de una deuda (registrado por error): NO borra la deuda, sino
+      // que revierte el pago. Lo abonado vuelve a quedar pendiente, se limpian los
+      // campos de pago y así el saldo esperado deja de contar ese ingreso y la deuda
+      // del cliente regresa a su valor real.
+      const debt = await prisma.clientDebt.findUnique({ where: { id: entityId } });
+      if (!debt) return;
+      const collected = debt.paidAmount ?? 0;
+      if (collected <= 0) return;
+      await prisma.$transaction(async (tx) => {
+        await tx.client.update({
+          where: { id: debt.clientId },
+          data: { pendingDebt: { increment: collected } },
+        });
+        await tx.clientDebt.update({
+          where: { id: entityId },
+          data: {
+            paid: false,
+            paidAt: null,
+            paidAmount: 0,
+            paidCash: 0,
+            paidBank: 0,
+            paidBy: null,
+            paidByName: null,
+          },
+        });
       });
       break;
     }

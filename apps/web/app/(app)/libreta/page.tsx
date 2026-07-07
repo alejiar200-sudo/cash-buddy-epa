@@ -8,12 +8,12 @@ import type { FieldNote } from "@/lib/sd-api";
 import { useAuth } from "@/lib/auth";
 import { useLive } from "@/lib/use-live";
 import { useDay } from "@/lib/day-context";
-import { prettyDate, todayISO } from "@/lib/format";
+import { prettyDate } from "@/lib/format";
 
 export default function LibretaPage() {
   const { user } = useAuth();
-  const { date } = useDay();
-  const isToday = date === todayISO();
+  const { date, operatingDay } = useDay();
+  const isToday = date === operatingDay;
   const [notes, setNotes] = useState<FieldNote[]>([]);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState("");

@@ -33,8 +33,9 @@ export async function createClient(data: {
   notes?: string;
   initialDebt?: number;
   initialDebtDescription?: string;
+  initialDebtMedium?: "cash" | "bank";
 }) {
-  const { initialDebt, initialDebtDescription, ...clientData } = data;
+  const { initialDebt, initialDebtDescription, initialDebtMedium, ...clientData } = data;
 
   const client = await prisma.client.create({ data: clientData });
 
@@ -46,6 +47,7 @@ export async function createClient(data: {
           clientId: client.id,
           description: initialDebtDescription?.trim() || "Deuda inicial",
           amount: Math.round(initialDebt),
+          medium: initialDebtMedium ?? null,
         },
       }),
       prisma.client.update({
@@ -72,10 +74,10 @@ export async function updateClient(id: string, data: Partial<{
   return prisma.client.update({ where: { id }, data });
 }
 
-export async function addDebt(clientId: string, description: string, amount: number, date?: string, actor?: { id?: string | null; name?: string | null }) {
+export async function addDebt(clientId: string, description: string, amount: number, date?: string, actor?: { id?: string | null; name?: string | null }, medium?: "cash" | "bank" | null) {
   const [debt] = await prisma.$transaction([
     prisma.clientDebt.create({
-      data: { clientId, description, amount, createdBy: actor?.id ?? null, createdByName: actor?.name ?? null, ...(date ? { createdAt: new Date(date + "T12:00:00") } : {}) },
+      data: { clientId, description, amount, medium: medium ?? null, createdBy: actor?.id ?? null, createdByName: actor?.name ?? null, ...(date ? { createdAt: new Date(date + "T12:00:00") } : {}) },
     }),
     prisma.client.update({
       where: { id: clientId },
@@ -105,7 +107,11 @@ export async function payDebt(debtId: string, paidAmount?: number) {
       where: { id: debtId },
       data: {
         paid: fullyPaid,
-        paidAt: fullyPaid ? new Date() : null,
+        // paidAt marca CUÁNDO entró dinero por esta deuda. El saldo esperado filtra
+        // los cobros por paidAt, así que un abono PARCIAL también debe fecharse; si
+        // solo se marcara al quedar 100% pagada, los abonos parciales no se reflejaban
+        // en el saldo (dinero cobrado que "no aparecía").
+        paidAt: new Date(),
         paidAmount: newPaidAmount,
       },
     }),
@@ -173,7 +179,9 @@ export async function registerClientPayment(
         data: {
           paidAmount: newPaid,
           paid: fullyPaid,
-          paidAt: fullyPaid ? new Date() : null,
+          // Ver nota en payDebt: los abonos parciales también deben fecharse para
+          // que el dinero cobrado se refleje en el saldo esperado.
+          paidAt: new Date(),
           paidBy: opts?.actor?.id ?? null,
           paidByName: opts?.actor?.name ?? null,
           ...(cashPart > 0 ? { paidCash: { increment: cashPart } } : {}),

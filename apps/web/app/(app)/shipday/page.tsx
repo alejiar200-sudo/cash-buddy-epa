@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import Link from "next/link";
 import * as api from "@/lib/sd-api";
 import type { DashboardFull, LocalUrls } from "@/lib/sd-api";
-import { formatCOP, prettyDate, todayISO } from "@/lib/format";
+import { formatCOP, prettyDate } from "@/lib/format";
 import { useStore } from "@/lib/store";
 import { useDay } from "@/lib/day-context";
 import { ShieldCheck } from "lucide-react";
@@ -15,8 +15,8 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardFull | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const { date } = useDay();
-  const isToday = date === todayISO();
+  const { date, operatingDay } = useDay();
+  const isToday = date === operatingDay;
 
   const load = async (silent = false) => {
     if (!silent) setLoading(true);
