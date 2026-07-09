@@ -16,9 +16,13 @@ interface Props {
   driver: DriverLite;
   onClose: () => void;
   onRefresh: () => void;
+  // Solo visualización: en la pantalla de Deudas, mostrar únicamente los domicilios
+  // de la deuda ACTUAL (los entregados después del último pago), sin acumular los ya
+  // saldados. En Domiciliarios queda en falso → muestra el histórico completo.
+  debtCycle?: boolean;
 }
 
-export function DriverStatementModal({ driver, onClose, onRefresh }: Props) {
+export function DriverStatementModal({ driver, onClose, onRefresh, debtCycle }: Props) {
   const [statement, setStatement] = useState<api.DriverStatement | null>(null);
   const [payAmount, setPayAmount] = useState("");
   const [payMedium, setPayMedium] = useState<"cash" | "bank">("cash");
@@ -31,6 +35,18 @@ export function DriverStatementModal({ driver, onClose, onRefresh }: Props) {
   const basePending = statement ? Math.max(0, statement.totalBasesGiven - statement.totalBasesPaid) : 0;
   const totalOwed = statement?.pendingDebt ?? 0;
   const companyOwes = statement?.creditAmount ?? 0;
+
+  // En modo Deudas: solo los domicilios de la deuda actual (entregados DESPUÉS del último
+  // pago). En modo normal (Domiciliarios): todos. Es solo cómo se muestra; el saldo real
+  // (pendingDebt) no cambia.
+  const displayOrders = statement
+    ? (debtCycle && statement.debtCycleStart
+        ? statement.orders.filter(o => o.deliveredAt && new Date(o.deliveredAt) > new Date(statement.debtCycleStart as string))
+        : statement.orders)
+    : [];
+  const shownCount = displayOrders.length;
+  const shownValue = displayOrders.reduce((s, o) => s + o.deliveryValue, 0);
+  const shownCompany = displayOrders.reduce((s, o) => s + o.companyAmount, 0);
 
   const handlePay = async () => {
     const amount = parseInt(payAmount.replace(/\D/g, ""));
@@ -71,9 +87,9 @@ export function DriverStatementModal({ driver, onClose, onRefresh }: Props) {
         ) : (
           <>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <Stat label="Pedidos entregados" value={String(statement.totalOrders)} />
-              <Stat label="Valor entregado" value={formatCOP(statement.totalValue)} />
-              <Stat label="% empresa acumulado" value={formatCOP(statement.totalCompany)} />
+              <Stat label="Pedidos entregados" value={String(shownCount)} />
+              <Stat label="Valor entregado" value={formatCOP(shownValue)} />
+              <Stat label="% empresa acumulado" value={formatCOP(shownCompany)} />
               <Stat label="Deuda total" value={formatCOP(totalOwed)} highlight={totalOwed > 0} />
               {companyOwes > 0 && <Stat label="Empresa le debe" value={formatCOP(companyOwes)} credit />}
             </div>
@@ -185,9 +201,9 @@ export function DriverStatementModal({ driver, onClose, onRefresh }: Props) {
             )}
 
             <div className="space-y-2">
-              <h3 className="font-bold text-sm text-muted-foreground uppercase tracking-wide">Últimos pedidos entregados</h3>
+              <h3 className="font-bold text-sm text-muted-foreground uppercase tracking-wide">Pedidos entregados ({shownCount})</h3>
               <div className="space-y-1">
-                {statement.orders.slice(0, 10).map(o => (
+                {displayOrders.map(o => (
                   <div key={o.id} className="flex justify-between text-sm py-1.5 px-3 rounded-lg bg-secondary/30">
                     <span className="text-muted-foreground">
                       {o.deliveredAt ? new Date(o.deliveredAt).toLocaleString("es-CO", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"} · #{o.orderNumber ?? "—"}
@@ -198,7 +214,7 @@ export function DriverStatementModal({ driver, onClose, onRefresh }: Props) {
                     </div>
                   </div>
                 ))}
-                {statement.orders.length === 0 && (
+                {displayOrders.length === 0 && (
                   <p className="text-center py-4 text-xs text-muted-foreground">Sin pedidos entregados aún.</p>
                 )}
               </div>

@@ -183,6 +183,26 @@ export async function getDriverStatement(id: string) {
   const totalBasesPaid = bases.filter(b => b.type === "pago").reduce((s, b) => s + b.amount, 0);
   const totalPaid = payments.reduce((s, p) => s + p.amount, 0);
 
+  // INICIO DEL CICLO DE DEUDA ACTUAL — solo para VISUALIZACIÓN (pantalla de Deudas).
+  // Reconstruye el saldo del domiciliario en orden cronológico (comisión de cada
+  // domicilio suma; pagos y devoluciones de base restan) y marca el ÚLTIMO momento en
+  // que la deuda quedó saldada (<= 0). Los domicilios de la deuda actual son los
+  // entregados DESPUÉS de ese momento. Así, cuando paga TODO y vuelve a pedir, el conteo
+  // arranca en 1; un abono PARCIAL (sigue debiendo) NO reinicia el conteo. No cambia
+  // ningún saldo real (pendingDebt) ni la lógica de deuda.
+  const events: { t: number; delta: number }[] = [];
+  for (const o of orders) if (o.deliveredAt) events.push({ t: o.deliveredAt.getTime(), delta: o.companyAmount });
+  for (const b of bases) events.push({ t: b.date.getTime(), delta: b.type === "entrega" ? b.amount : -b.amount });
+  for (const p of payments) events.push({ t: p.date.getTime(), delta: -p.amount });
+  events.sort((a, b) => a.t - b.t);
+  let bal = 0;
+  let cycleStartMs = 0; // 0 = nunca llegó a saldarse → se muestran todos (primer ciclo)
+  for (const e of events) {
+    bal += e.delta;
+    if (bal <= 0) cycleStartMs = e.t; // cada vez que se salda, el ciclo se reinicia aquí
+  }
+  const debtCycleStart = cycleStartMs ? new Date(cycleStartMs) : null;
+
   return {
     driver,
     totalOrders,
@@ -191,6 +211,7 @@ export async function getDriverStatement(id: string) {
     totalBasesGiven,
     totalBasesPaid,
     totalPaid,
+    debtCycleStart,
     pendingDebt: driver.pendingDebt,
     creditAmount: driver.creditAmount ?? 0,
     creditMedium: driver.creditMedium ?? null,

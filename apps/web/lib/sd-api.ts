@@ -446,6 +446,7 @@ export interface DriverStatement {
   totalBasesGiven: number;
   totalBasesPaid: number;
   totalPaid: number;
+  debtCycleStart?: string | null;
   pendingDebt: number;
   creditAmount: number;
   creditMedium?: string | null;

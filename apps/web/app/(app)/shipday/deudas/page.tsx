@@ -251,6 +251,7 @@ export default function DeudasPage() {
           driver={{ id: selected.id, name: selected.name, branch: selected.branch }}
           onClose={() => setSelected(null)}
           onRefresh={load}
+          debtCycle
         />
       )}
 

@@ -92,22 +92,47 @@ export interface ShipdayOrder {
 
 const DELIVERED_STATES = new Set(["DELIVERED", "COMPLETED", "delivered", "completed"]);
 
+// Reintentos ante errores TRANSITORIOS de Shipday (rate limit / caídas momentáneas).
+// El "rate limit exceeded" de Shipday llega como HTTP 400 con ese texto, o como 429;
+// los 5xx y los errores de red también son pasajeros. Reintentar aquí evita que una
+// sola respuesta transitoria tumbe toda una sincronización (antes: un 400 de rate limit
+// en cualquier página abortaba el barrido completo y dejaba pedidos sin cargar).
+const MAX_ATTEMPTS = 3;
+
+function isRetriable(status: number, body: string): boolean {
+  return status === 429 || status >= 500 || (status === 400 && /rate limit/i.test(body));
+}
+
 async function shipdayFetch<T>(apiKey: string, path: string): Promise<T> {
-  await acquireSlot();
-  const res = await fetch(`${BASE_URL}${path}`, {
-    headers: {
-      Authorization: `Basic ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-  });
-  if (!res.ok) {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    await acquireSlot();
+    let res: Response;
+    try {
+      res = await fetch(`${BASE_URL}${path}`, {
+        headers: {
+          Authorization: `Basic ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+      });
+    } catch (netErr) {
+      // Error de red → transitorio: reintentar.
+      lastErr = netErr;
+      if (attempt === MAX_ATTEMPTS) break;
+      await sleep(1200 * attempt);
+      continue;
+    }
+    if (res.ok) return res.json() as Promise<T>;
     const text = await res.text().catch(() => "");
     if (res.status === 401 || res.status === 403) {
       throw new Error(`API Key de Shipday inválida o sin permisos (${res.status}).`);
     }
-    throw new Error(`Shipday API error ${res.status}: ${text}`);
+    lastErr = new Error(`Shipday API error ${res.status}: ${text}`);
+    if (!isRetriable(res.status, text)) throw lastErr; // error definitivo → propagar ya
+    if (attempt === MAX_ATTEMPTS) break;
+    await sleep(1200 * attempt); // backoff; acquireSlot además espaciará por el limitador
   }
-  return res.json() as Promise<T>;
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 export async function getDrivers(apiKey: string): Promise<ShipdayDriver[]> {
@@ -227,30 +252,70 @@ export async function getCompletedOrders(apiKey: string, from: string, to: strin
   const MAX_PAGES = 100; // tope de seguridad (hasta 10.000 pedidos en el rango)
   const all: ShipdayCompletedOrder[] = [];
   for (let page = 0; page < MAX_PAGES; page++) {
-    await acquireSlot();
-    const res = await fetch(`${BASE_URL}/orders/query`, {
-      method: "POST",
-      headers: { Authorization: `Basic ${apiKey}`, "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({
+    let batch: ShipdayCompletedOrder[];
+    try {
+      batch = await fetchCompletedPage(apiKey, {
         startTime,
         endTime,
         orderStatus: "ALREADY_DELIVERED",
         startCursor: page * PAGE,
         endCursor: (page + 1) * PAGE,
-      }),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`Shipday /orders/query devolvió ${res.status}: ${body}`);
+      });
+    } catch (err) {
+      // Una página falló tras los reintentos. CLAVE: no descartar lo ya recolectado.
+      // Los pedidos vienen del más nuevo al más viejo, así que los más viejos del día
+      // (p. ej. entregados al mediodía) caen en las páginas profundas; si un rate limit
+      // corta ahí y tiráramos todo, ESE pedido no se cargaría nunca y habría que meterlo
+      // a mano (bug real). En su lugar: si ya trajimos algo, devolvemos lo parcial y el
+      // próximo barrido reintenta el resto (persistDeliveredOrder es idempotente). Solo
+      // si falla la PRIMERA página propagamos el error (no hay nada que salvar y el sync
+      // debe quedar marcado en error).
+      if (all.length === 0) throw err;
+      console.warn(
+        `[shipday/query] página ${page} falló tras reintentos; se continúa con ${all.length} pedidos parciales (el próximo barrido traerá el resto):`,
+        err instanceof Error ? err.message : err,
+      );
+      break;
     }
-    const data = (await res.json()) as ShipdayCompletedOrder[] | { orders?: ShipdayCompletedOrder[] };
-    const batch: ShipdayCompletedOrder[] = Array.isArray(data) ? data : (data.orders ?? []);
     if (batch.length === 0) break;
     all.push(...batch);
     if (batch.length < PAGE) break; // última página parcial
   }
   // Solo los realmente entregados y NO marcados como incompletos.
   return all.filter(o => !o.incomplete && o.deliveryTime);
+}
+
+// Trae UNA página de /orders/query reintentando ante errores transitorios (rate limit,
+// 5xx, red). Devuelve el arreglo de pedidos (plano). Lanza solo si agota los reintentos
+// o ante un error definitivo (auth, etc.).
+async function fetchCompletedPage(apiKey: string, body: object): Promise<ShipdayCompletedOrder[]> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    await acquireSlot();
+    let res: Response;
+    try {
+      res = await fetch(`${BASE_URL}/orders/query`, {
+        method: "POST",
+        headers: { Authorization: `Basic ${apiKey}`, "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (netErr) {
+      lastErr = netErr;
+      if (attempt === MAX_ATTEMPTS) break;
+      await sleep(1200 * attempt);
+      continue;
+    }
+    if (res.ok) {
+      const data = (await res.json()) as ShipdayCompletedOrder[] | { orders?: ShipdayCompletedOrder[] };
+      return Array.isArray(data) ? data : (data.orders ?? []);
+    }
+    const text = await res.text().catch(() => "");
+    lastErr = new Error(`Shipday /orders/query devolvió ${res.status}: ${text}`);
+    if (!isRetriable(res.status, text)) throw lastErr; // error definitivo → propagar ya
+    if (attempt === MAX_ATTEMPTS) break;
+    await sleep(1200 * attempt); // backoff; acquireSlot además espaciará por el limitador
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 export function getCompletedDeliveryValue(o: ShipdayCompletedOrder): number {
