@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
-import { Check, X, Clock, FileEdit, RefreshCw, Trash2 } from "lucide-react";
+import { Check, X, Clock, FileEdit, RefreshCw, Trash2, History } from "lucide-react";
 import { toast } from "sonner";
 import * as api from "@/lib/sd-api";
 import type { EditRequest } from "@/lib/sd-api";
@@ -32,7 +32,10 @@ const ENTITY_LABELS: Record<string, string> = {
 export default function SolicitudesPage() {
   const { user } = useAuth();
   const router = useRouter();
-  const [tab, setTab] = useState<"pending" | "approved" | "rejected">("pending");
+  // "pending" = solicitudes por revisar · "history" = historial de aprobadas + rechazadas
+  const [view, setView] = useState<"pending" | "history">("pending");
+  // Filtro dentro del historial (solo visualización)
+  const [histFilter, setHistFilter] = useState<"all" | "approved" | "rejected">("all");
   const [requests, setRequests] = useState<EditRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [reviewing, setReviewing] = useState<string | null>(null);
@@ -45,14 +48,26 @@ export default function SolicitudesPage() {
   const load = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const data = await api.getEditRequests(tab);
+      let data: EditRequest[];
+      if (view === "pending") {
+        data = await api.getEditRequests("pending");
+      } else {
+        // Historial: todo lo ya revisado (aprobado o rechazado), más reciente primero
+        const all = await api.getEditRequests();
+        data = all.filter(r => r.status !== "pending");
+      }
       setRequests(prev => JSON.stringify(prev) === JSON.stringify(data) ? prev : data);
     } catch { if (!silent) toast.error("Error al cargar solicitudes"); }
     if (!silent) setLoading(false);
   };
 
-  useEffect(() => { load(); }, [tab]);
+  useEffect(() => { load(); }, [view]);
   useLive(() => load(true), 5000);
+
+  // Lista visible: en historial aplica el filtro aprobadas/rechazadas
+  const visible = view === "history" && histFilter !== "all"
+    ? requests.filter(r => r.status === histFilter)
+    : requests;
 
   async function review(id: string, action: "approved" | "rejected") {
     setReviewing(id);
@@ -76,31 +91,53 @@ export default function SolicitudesPage() {
         </button>
       </div>
 
-      {/* Tabs */}
+      {/* Vista: Pendientes vs Historial movimientos */}
       <div className="flex gap-1 p-1 bg-secondary/50 rounded-2xl w-fit">
-        {([["pending", "Pendientes"], ["approved", "Aprobadas"], ["rejected", "Rechazadas"]] as const).map(([k, label]) => (
-          <button key={k} onClick={() => setTab(k)}
-            className={`px-4 py-2 rounded-xl text-sm font-bold transition ${tab === k ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-            {label}
-          </button>
-        ))}
+        <button onClick={() => setView("pending")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition ${view === "pending" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+          <Clock className="h-4 w-4" /> Pendientes
+        </button>
+        <button onClick={() => setView("history")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition ${view === "history" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+          <History className="h-4 w-4" /> Historial movimientos
+        </button>
       </div>
+
+      {/* Filtro dentro del historial (aprobadas / rechazadas) */}
+      {view === "history" && (
+        <div className="flex gap-1 flex-wrap">
+          {([["all", "Todas"], ["approved", "Aprobadas"], ["rejected", "Rechazadas"]] as const).map(([k, label]) => (
+            <button key={k} onClick={() => setHistFilter(k)}
+              className={`px-3 py-1.5 rounded-full text-xs font-bold transition border ${histFilter === k ? "bg-primary/10 border-primary/30 text-primary" : "border-border text-muted-foreground hover:text-foreground"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {loading ? (
         <div className="text-center py-16 text-muted-foreground">Cargando…</div>
-      ) : requests.length === 0 ? (
+      ) : visible.length === 0 ? (
         <div className="glass-strong rounded-3xl p-12 text-center">
           <FileEdit className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
           <p className="font-bold text-lg">
-            {tab === "pending" ? "Sin solicitudes pendientes" : tab === "approved" ? "Sin solicitudes aprobadas" : "Sin solicitudes rechazadas"}
+            {view === "pending"
+              ? "Sin solicitudes pendientes"
+              : histFilter === "approved"
+                ? "Sin movimientos aprobados"
+                : histFilter === "rejected"
+                  ? "Sin movimientos rechazados"
+                  : "Sin movimientos en el historial"}
           </p>
           <p className="text-sm text-muted-foreground mt-1">
-            {tab === "pending" ? "Cuando el personal pida un cambio, aparecerá aquí." : ""}
+            {view === "pending"
+              ? "Cuando el personal pida un cambio, aparecerá aquí."
+              : "Aquí quedan registrados los cambios aprobados y rechazados."}
           </p>
         </div>
       ) : (
         <div className="space-y-3">
-          {requests.map(r => (
+          {visible.map(r => (
             <div key={r.id} className="glass-strong rounded-3xl p-5 space-y-4">
               {/* Header */}
               <div className="flex items-start justify-between gap-3 flex-wrap">
