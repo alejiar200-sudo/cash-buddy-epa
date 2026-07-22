@@ -1,55 +1,55 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { useStore, dayBalances } from "@/lib/store";
 import { useDay } from "@/lib/day-context";
 import { formatCOP, prettyDate } from "@/lib/format";
 import * as api from "@/lib/sd-api";
 import { Calendar, Table as TableIcon, X } from "lucide-react";
 
-function isCuadrada(close: api.ShiftClose): boolean {
-  return close.difference === 0 && (close.bankDifference == null || close.bankDifference === 0);
-}
-
 export default function HistoryPage() {
   const [view, setView] = useState<"calendar" | "table">("calendar");
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
-  const { state } = useStore();
   const { setDate } = useDay();
   const [openDate, setOpenDate] = useState<string | null>(null);
-  // Cierres ("close") del mes visible — el semáforo verde/rojo del calendario
-  // depende ÚNICA Y EXCLUSIVAMENTE de si la caja cuadró en el Cierre registrado
-  // ese día, sin importar el resto de la información del detalle.
-  const [closeShifts, setCloseShifts] = useState<Record<string, api.ShiftClose>>({});
+  // Resúmenes REALES por día del mes visible (saldos autoritativos: los mismos que la
+  // Caja/Cierre — cuentan banco, domiciliarios, bases y deudas, no solo la Caja vieja).
+  // La apertura de cada día es el cierre real del día anterior, así ya no hay dos días
+  // seguidos con el mismo saldo inicial "arrastrado" por error.
+  const [summaries, setSummaries] = useState<Record<string, api.DaySummary>>({});
 
   useEffect(() => {
     const [y, m] = month.split("-").map(Number);
     const lastDay = new Date(y, m, 0).getDate();
     const from = `${month}-01`;
     const to = `${month}-${String(lastDay).padStart(2, "0")}`;
-    api.getShifts({ from, to }).then(shifts => {
-      const map: Record<string, api.ShiftClose> = {};
-      for (const s of shifts) if (s.shift === "close") map[s.date] = s;
-      setCloseShifts(map);
+    let alive = true;
+    setSummaries({});
+    api.getDaySummaries(from, to).then(list => {
+      if (!alive) return;
+      const map: Record<string, api.DaySummary> = {};
+      for (const s of list) map[s.date] = s;
+      setSummaries(map);
     }).catch(() => {});
+    return () => { alive = false; };
   }, [month]);
 
   const days = useMemo(() => {
     const [y, m] = month.split("-").map(Number);
     const last = new Date(y, m, 0).getDate();
-    const arr: { date: string; balances: ReturnType<typeof dayBalances> | null; status: "ok" | "warn" | "danger" | "empty" }[] = [];
+    const arr: { date: string; summary: api.DaySummary | null; status: "ok" | "warn" | "danger" | "empty" }[] = [];
     for (let d = 1; d <= last; d++) {
       const date = `${month}-${String(d).padStart(2, "0")}`;
-      const day = state.days[date];
-      const close = closeShifts[date];
+      const summary = summaries[date] ?? null;
+      // El semáforo verde/rojo depende ÚNICA Y EXCLUSIVAMENTE del Cierre del día
+      // (cajaCuadrada), no del resto de las cifras.
       let status: "ok" | "warn" | "danger" | "empty";
-      if (close) status = isCuadrada(close) ? "ok" : "danger";
-      else if (day) status = "warn";
+      if (summary?.hasClose) status = summary.cajaCuadrada ? "ok" : "danger";
+      else if (summary?.hasActivity) status = "warn";
       else status = "empty";
-      arr.push({ date, balances: day ? dayBalances(day) : null, status });
+      arr.push({ date, summary, status });
     }
     return arr;
-  }, [month, state.days, closeShifts]);
+  }, [month, summaries]);
 
   return (
     <div className="space-y-5">
@@ -83,7 +83,7 @@ export default function HistoryPage() {
                 className={`aspect-square rounded-2xl p-2 text-left transition hover:scale-105 ${cls}`}
               >
                 <div className="text-2xl font-black">{dayNum}</div>
-                {d.balances && <div className="text-[10px] tnum mt-1">{formatCOP(d.balances.total)}</div>}
+                {d.summary?.hasActivity && <div className="text-[10px] tnum mt-1">{formatCOP(d.summary.finalTotal)}</div>}
               </button>
             );
           })}
@@ -101,13 +101,13 @@ export default function HistoryPage() {
               </tr>
             </thead>
             <tbody>
-              {days.filter(d => d.balances).map(d => (
+              {days.filter(d => d.summary?.hasActivity).map(d => (
                 <tr key={d.date} className="border-b border-border/40 hover:bg-secondary/30 cursor-pointer" onClick={() => { setDate(d.date); }}>
                   <td className="p-3 text-sm">{d.date}</td>
-                  <td className="p-3 text-right tnum text-sm text-muted-foreground">{formatCOP((state.days[d.date].initialCash) + (state.days[d.date].initialBank))}</td>
-                  <td className="p-3 text-right tnum text-cash font-bold">{formatCOP(d.balances!.cash)}</td>
-                  <td className="p-3 text-right tnum text-bank font-bold">{formatCOP(d.balances!.bank)}</td>
-                  <td className="p-3 text-right tnum font-black">{formatCOP(d.balances!.total)}</td>
+                  <td className="p-3 text-right tnum text-sm text-muted-foreground">{formatCOP(d.summary!.initialTotal)}</td>
+                  <td className="p-3 text-right tnum text-cash font-bold">{formatCOP(d.summary!.finalCash)}</td>
+                  <td className="p-3 text-right tnum text-bank font-bold">{formatCOP(d.summary!.finalBank)}</td>
+                  <td className="p-3 text-right tnum font-black">{formatCOP(d.summary!.finalTotal)}</td>
                 </tr>
               ))}
             </tbody>

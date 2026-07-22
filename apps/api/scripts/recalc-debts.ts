@@ -1,19 +1,34 @@
 /**
- * Recalcula la deuda/crédito de cada domiciliario desde sus registros (verdad
- * única), corrigiendo estados donde deuda y crédito quedaron ambos positivos por
- * no netear (bug histórico). Es el mismo cálculo canónico que usa startOrdersFromToday:
- *   neto = comisión(pedidos) + basesEntregadas − basesDevueltas − pagos
- *   pendingDebt = max(0, neto)   creditAmount = max(0, −neto)
+ * ⚠️ OBSOLETO — NO EJECUTAR. Este script CORROMPE el saldo de los domiciliarios.
  *
- * No toca pedidos, pagos ni bases: solo el saldo derivado del domiciliario.
+ * Su fórmula (neto = comisión + basesEntregadas − basesDevueltas − pagos) quedó
+ * desactualizada cuando se introdujo el pago de deuda vía movimiento bancario
+ * (debtApplied) y los registros "bank-linked":
+ *   - Resta TODOS los `driverPayment` y las `baseTransaction` tipo "pago", incluidas
+ *     las bank-linked, que son contabilidad interna de un BankTransaction ya contado
+ *     en `debtApplied`. Resultado: DOBLE conteo (resta el mismo pago dos veces).
+ *   - Ignora `debtApplied` y los egresos (pago de crédito), así que además resucita
+ *     créditos ya pagados.
+ * Correr esto hoy dejaría a casi todos los domiciliarios con un crédito/deuda falso
+ * (verificado: en los datos actuales daría descuadres de decenas de miles por persona).
  *
- * Uso: npx tsx scripts/recalc-debts.ts
+ * La forma correcta de mantener el saldo NO es un recompute masivo, sino que cada
+ * escritura netee el delta con `applyDebtDelta()` (driver.service.ts). Un recompute
+ * fiable tendría que replicar TODA la semántica de BankTransaction (debtApplied,
+ * egresos, contrapartes, splits) — por eso este atajo por fórmula no sirve.
+ *
+ * Se deja el código como referencia histórica, pero aborta antes de tocar nada.
  */
 import { prisma } from "../src/lib/prisma";
 
 const money = (n: number) => "$" + Math.round(n).toLocaleString("es-CO");
 
 async function main() {
+  throw new Error(
+    "recalc-debts.ts está OBSOLETO y corrompe saldos (doble conteo de pagos bank-linked, " +
+    "ignora debtApplied/egresos). No lo ejecutes. Ver el comentario de cabecera."
+  );
+  // eslint-disable-next-line no-unreachable
   const drivers = await prisma.driver.findMany({ select: { id: true, name: true, pendingDebt: true, creditAmount: true } });
   console.log(`Recalculando ${drivers.length} domiciliarios...\n`);
   let changed = 0;

@@ -306,7 +306,11 @@ model BaseTransaction {
 
   branch          Branch           @relation(fields: [branchId], references: [id], onDelete: Cascade)
   driver          Driver           @relation(fields: [driverId], references: [id], onDelete: Cascade)
-  bankTransaction BankTransaction? @relation(fields: [bankTransactionId], references: [id], onDelete: SetNull)
+  // Cascade, NO SetNull: con SetNull, borrar el BankTransaction dejaba este registro
+  // vivo y con bankTransactionId=null — un "pago" fantasma imposible de rastrear que
+  // mantenía la deuda del domiciliario en cero. Con Cascade, si alguna ruta de borrado
+  // olvida la limpieza explícita, el registro se va igual y el descuadre es visible.
+  bankTransaction BankTransaction? @relation(fields: [bankTransactionId], references: [id], onDelete: Cascade)
 
   @@index([branchId])
   @@index([driverId])
@@ -329,7 +333,8 @@ model DriverPayment {
   bankTransactionId String?
 
   driver          Driver           @relation(fields: [driverId], references: [id], onDelete: Cascade)
-  bankTransaction BankTransaction? @relation(fields: [bankTransactionId], references: [id], onDelete: SetNull)
+  // Cascade, NO SetNull: ver comentario en BaseTransaction.bankTransaction.
+  bankTransaction BankTransaction? @relation(fields: [bankTransactionId], references: [id], onDelete: Cascade)
 
   @@index([driverId])
   @@index([branchId])
@@ -467,6 +472,13 @@ model BankTransaction {
   groupId       String? // enlaza las dos mitades de un movimiento mixto (efectivo+transferencia)
   pairId        String? // enlaza un movimiento con su contraparte (salida ↔ retorno) de forma explícita
   noCounterpart Boolean    @default(false) // marcado explícito: este movimiento NO requiere contraparte
+  // Cuánto redujo este movimiento la POSICIÓN NETA (deuda − crédito) del domiciliario.
+  // 0 = nunca se aplicó a una deuda. Es el ÚNICO marcador válido para revertir al
+  // eliminar: antes se deducía de (driverId && noCounterpart && type=="ingreso"), y esa
+  // heurística falló con un egreso aplicado por error a una deuda — se borró el
+  // movimiento y la deuda del domiciliario nunca se restableció (caso Luisa Palencia,
+  // 17-jul-2026). Con este campo la reversión no depende de adivinar el tipo.
+  debtApplied   Int        @default(0)
   createdBy     String?
   createdByName String?
   date          DateTime   @default(now())

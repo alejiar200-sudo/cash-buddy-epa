@@ -5,15 +5,38 @@ const BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 const TOKEN_KEY = "cashbuddy.token";
 
+// El token vive en sessionStorage, NO en localStorage: debe morir al cerrar la app
+// o el navegador, para que al volver a abrir SIEMPRE pida usuario y contraseña.
+//
+// Con localStorage el token quedaba en disco (hasta 7 días, lo que dure el JWT) y la
+// sesión reaparecía sola al reabrir. Además localStorage es por ORIGEN, así que cerrar
+// sesión en la app (localhost:4000) no tocaba la sesión abierta desde otro PC
+// (192.168.x.x:4000): quedaba viva sin que nadie se enterara.
+//
+// sessionStorage se conserva al recargar la página (el watchdog de CashBuddy.exe
+// recarga cuando reinicia el backend, y eso NO debe desloguear), pero se borra al
+// cerrar la ventana.
+
+/** Borra restos del esquema viejo en localStorage (sesiones que quedaron persistidas). */
+function purgeLegacyToken() {
+  try {
+    if (localStorage.getItem(TOKEN_KEY) !== null) localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* almacenamiento bloqueado */
+  }
+}
+
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem(TOKEN_KEY);
+  purgeLegacyToken();
+  return sessionStorage.getItem(TOKEN_KEY);
 }
 
 export function setToken(token: string | null) {
   if (typeof window === "undefined") return;
-  if (token) localStorage.setItem(TOKEN_KEY, token);
-  else localStorage.removeItem(TOKEN_KEY);
+  purgeLegacyToken();
+  if (token) sessionStorage.setItem(TOKEN_KEY, token);
+  else sessionStorage.removeItem(TOKEN_KEY);
 }
 
 export class ApiError extends Error {

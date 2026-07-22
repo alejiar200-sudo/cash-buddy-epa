@@ -4,14 +4,19 @@ import { applyDebtDelta } from "./driver.service";
 import { bogotaOpenRange } from "../lib/date-range";
 
 // Eliminar una base (admin directo): revierte el efecto en la deuda del domiciliario.
+// Usa applyDebtDelta (netea contra el crédito y nunca deja pendingDebt negativo) en
+// vez de un `pendingDebt: { increment }` crudo. El increment crudo ignoraba el crédito
+// y podía dejar pendingDebt negativo: un agujero silencioso que sacaba al domiciliario
+// de "Deudas" (filtra por pendingDebt > 0) aunque su base siguiera pendiente.
 export async function removeBase(id: string) {
   const base = await prisma.baseTransaction.findUnique({ where: { id } });
   if (!base) throw notFound("Base no encontrada");
-  const sign = base.type === "entrega" ? -1 : 1; // entrega subió deuda → al borrar baja
-  await prisma.$transaction([
-    prisma.driver.update({ where: { id: base.driverId }, data: { pendingDebt: { increment: sign * base.amount } } }),
-    prisma.baseTransaction.delete({ where: { id } }),
-  ]);
+  // entrega subió la deuda → al borrar baja (−amount); pago la bajó → al borrar sube (+amount)
+  const delta = base.type === "entrega" ? -base.amount : base.amount;
+  await prisma.$transaction(async (tx) => {
+    await tx.baseTransaction.delete({ where: { id } });
+    await applyDebtDelta(tx, base.driverId, delta);
+  });
   return { ok: true };
 }
 
@@ -48,12 +53,13 @@ export async function editBase(id: string, input: { cashAmount?: number; bankAmo
   }
 
   if (newAmount <= 0) throw badRequest("El monto debe ser mayor a 0");
-  const delta = newAmount - base.amount;
-  const sign = base.type === "entrega" ? 1 : -1; // entrega suma deuda; pago resta
-  await prisma.$transaction([
-    prisma.driver.update({ where: { id: base.driverId }, data: { pendingDebt: { increment: sign * delta } } }),
-    prisma.baseTransaction.update({ where: { id }, data: { amount: newAmount, cashAmount, bankAmount, ...(input.notes != null ? { notes: input.notes } : {}) } }),
-  ]);
+  // Ajuste por la diferencia, neteado contra el crédito (entrega suma; pago resta).
+  const sign = base.type === "entrega" ? 1 : -1;
+  const delta = sign * (newAmount - base.amount);
+  await prisma.$transaction(async (tx) => {
+    await tx.baseTransaction.update({ where: { id }, data: { amount: newAmount, cashAmount, bankAmount, ...(input.notes != null ? { notes: input.notes } : {}) } });
+    await applyDebtDelta(tx, base.driverId, delta);
+  });
   return { ok: true };
 }
 

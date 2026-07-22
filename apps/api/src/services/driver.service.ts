@@ -110,6 +110,8 @@ export async function registerPayment(driverId: string, amount: number, medium: 
         createdBy: actor?.id ?? null,
         createdByName: actor?.name ?? null,
         noCounterpart: true,
+        // Este ingreso ES el pago: reduce la posición neta del domiciliario en `amount`.
+        debtApplied: amount,
       },
     });
 
@@ -234,6 +236,26 @@ export async function applyBankToDriver(
   if (!bankTx) throw notFound("Movimiento bancario no encontrado");
   if (!driver) throw notFound("Domiciliario no encontrado");
 
+  // Una deuda solo baja cuando ENTRA plata. Una salida es plata que la empresa
+  // entregó: descontarla de una deuda es contabilidad al revés. Esto ocurrió de
+  // verdad (17-jul-2026): se aplicó una salida de $100.000 a la deuda de una
+  // domiciliaria y le borró $18.600 que sí debía.
+  if (bankTx.type !== "ingreso") {
+    throw badRequest(
+      "Una salida no puede descontarse de una deuda: solo los ingresos reducen lo que debe un domiciliario."
+    );
+  }
+  // Un movimiento con contraparte es plata de paso (entra y vuelve a salir), no un
+  // pago del domiciliario. Aplicarlo a una deuda contaría el mismo dinero dos veces.
+  if (bankTx.pairId) {
+    throw badRequest(
+      "Este ingreso tiene contraparte registrada, así que no es un pago del domiciliario y no puede descontarse de su deuda."
+    );
+  }
+  if (bankTx.debtApplied > 0) {
+    throw badRequest("Este movimiento ya fue descontado de la deuda de un domiciliario.");
+  }
+
   const amount = bankTx.amount;
   const medium = (bankTx.medium ?? "bank") as "cash" | "bank";
   const previousDebt = driver.pendingDebt;
@@ -256,6 +278,8 @@ export async function applyBankToDriver(
           // domiciliario", para que al eliminarlo se revierta ese efecto (igual que
           // registerPayment). Sin esto, borrar el movimiento dejaba el crédito fantasma.
           noCounterpart: true,
+          // Sube el crédito en `amount` = baja la posición neta en `amount`.
+          debtApplied: amount,
           description: `${bankTx.description} · Abonado al crédito de ${driver.name} (${formatCOP(amount)})`,
         },
       }),
@@ -334,6 +358,8 @@ export async function applyBankToDriver(
         // Ver nota en la rama de crédito: marca el movimiento como aplicado a la
         // deuda del domiciliario para poder revertirlo al eliminarlo.
         noCounterpart: true,
+        // La posición neta bajó en `amount` completo (parte a deuda, sobrante a crédito).
+        debtApplied: amount,
         description: `${bankTx.description} · Descontado de la deuda de ${driver.name}${detalle}${sobrante}`,
       },
     });

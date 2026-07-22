@@ -3,8 +3,26 @@ import { prisma } from "../lib/prisma";
 import { balancesAtEndOfDay } from "./calc";
 import { toDayData, toMovement } from "./mappers";
 import { getSettings } from "./settings.service";
-import { bogotaDayRange } from "../lib/date-range";
+import { bogotaDayRange, toBogotaDateStr } from "../lib/date-range";
 import { isBankLinkedPaymentNote, isBankLinkedBaseNote } from "../lib/balance-markers";
+import { getExpectedBalancesForDate } from "./shipday-dashboard.service";
+
+/** "YYYY-MM-DD" del día calendario anterior (en zona Bogotá). */
+function previousDateStr(date: string): string {
+  return toBogotaDateStr(new Date(bogotaDayRange(date).gte.getTime() - 1));
+}
+
+/** Enumera las fechas "YYYY-MM-DD" del rango [from, to] inclusive (calendario). */
+function enumerateDates(from: string, to: string): string[] {
+  const out: string[] = [];
+  let cur = from;
+  // Guarda de seguridad: nunca más de ~400 días para no bloquear el proceso.
+  for (let i = 0; i < 400 && cur <= to; i++) {
+    out.push(cur);
+    cur = toBogotaDateStr(new Date(bogotaDayRange(cur).lte.getTime() + 1));
+  }
+  return out;
+}
 
 const DELIVERED_FILTER = { in: ["DELIVERED", "COMPLETED"] };
 
@@ -115,21 +133,33 @@ export async function listDays(): Promise<DayData[]> {
  * Cierre (ShiftClose shift="close") registrado ese día — el resto de la
  * información no afecta ese semáforo.
  */
-export async function getDaySummary(date: string) {
+export async function getDaySummary(date: string, openingOverride?: { cash: number; bank: number }) {
   // READ-ONLY: NO usar getDay/ensureDay aquí — eso CREARÍA el día (persiste un Day con
   // el saldo arrastrado del día anterior), y entonces días vacíos —pasados o futuros—
   // aparecían con "información que no existe" (saldo heredado) en el Historial y hasta
-  // ensuciaban el calendario. Aquí solo se LEE: si el día no existe, movimientos=[] y
-  // el saldo de apertura se calcula sin persistir nada.
+  // ensuciaban el calendario. Aquí solo se LEE: si el día no existe, movimientos=[].
   const dayRecord = await prisma.day.findUnique({
     where: { date },
     include: { movements: { orderBy: { createdAt: "asc" } } },
   });
   const movements = dayRecord?.movements ?? [];
-  const opening = dayRecord
-    ? { cash: dayRecord.initialCash, bank: dayRecord.initialBank }
-    : await getOpeningBalance(date);
   const range = bogotaDayRange(date);
+
+  // Saldo de APERTURA y CIERRE del día = balance REAL acumulado que usa la Caja/Cierre
+  // (getExpectedBalances), NO el arrastre viejo (Day.initialCash / balancesAtEndOfDay),
+  // que solo miraba los Movement de la "Caja" vieja e ignoraba banco, domiciliarios,
+  // bases, conversiones y deudas de clientes. Ese arrastre incompleto hacía que dos días
+  // seguidos sin movimientos de Caja vieja abrieran con el MISMO monto aunque de por medio
+  // hubiera plata de banco/domiciliarios (bug del Historial). Aquí:
+  //   apertura(D) = balance real al cierre del día anterior
+  //   cierre(D)   = balance real al final del día D
+  // Así el cierre de un día SIEMPRE es la apertura del siguiente (cadena consistente).
+  const [expectedEnd, opening] = await Promise.all([
+    getExpectedBalancesForDate(date),
+    openingOverride
+      ? Promise.resolve(openingOverride)
+      : getExpectedBalancesForDate(previousDateStr(date)),
+  ]);
 
   const [bankTxs, driverPayments, bases, clientDebtsPaid, clientDebtsGenAgg, orders, closeShift] = await Promise.all([
     prisma.bankTransaction.findMany({ where: { date: range } }),
@@ -177,8 +207,10 @@ export async function getDaySummary(date: string) {
   const deudasGeneradas = clientDebtsGenAgg._sum.amount ?? 0;
   const deudasCobradas = clientDebtsPaid.reduce((s, cp) => s + (cp.paidAmount ?? cp.paidCash + cp.paidBank), 0);
 
-  const finalCash = opening.cash + cashIn - cashOut;
-  const finalBank = opening.bank + bankIn - bankOut;
+  // Saldo final REAL (autoritativo), consistente con la Caja y con la apertura del
+  // día siguiente. Los ingresos/egresos de arriba son el desglose informativo del día.
+  const finalCash = expectedEnd.cash;
+  const finalBank = expectedEnd.bank;
 
   // El semáforo de "caja cuadrada" depende EXCLUSIVAMENTE del Cierre del día.
   const cajaCuadrada = !!closeShift && closeShift.difference === 0 && (closeShift.bankDifference == null || closeShift.bankDifference === 0);
@@ -213,6 +245,26 @@ export async function getDaySummary(date: string) {
     hasClose: !!closeShift,
     cajaCuadrada,
   };
+}
+
+/**
+ * Resúmenes de todos los días de un rango (Historial: calendario y tabla del mes).
+ * Encadena el saldo: la apertura de cada día es el cierre REAL del día anterior, así
+ * el mes entero queda consistente y usa una sola vez el cálculo autoritativo por día
+ * (openingOverride evita recalcular el saldo de apertura desde cero cada vez).
+ */
+export async function getDaySummariesRange(from: string, to: string) {
+  const dates = enumerateDates(from, to);
+  if (dates.length === 0) return [];
+  // Apertura del primer día = cierre real del día anterior al rango.
+  let prevFinal = await getExpectedBalancesForDate(previousDateStr(dates[0]));
+  const results = [];
+  for (const date of dates) {
+    const summary = await getDaySummary(date, prevFinal);
+    results.push(summary);
+    prevFinal = { cash: summary.finalCash, bank: summary.finalBank };
+  }
+  return results;
 }
 
 export async function updateArqueo(

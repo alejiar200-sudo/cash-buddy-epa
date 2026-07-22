@@ -114,17 +114,20 @@ export async function remove(id: string) {
 
   await prisma.$transaction(async (tx) => {
     for (const row of rows) {
-      // Si este movimiento se usó para descontar la deuda de un domiciliario
-      // (noCounterpart + driverId, vía applyBankToDriver), hay que revertir esa
-      // deuda y limpiar los registros contables subsidiarios que se crearon junto
-      // a él — igual que hace edit-request.service.ts al aprobar una eliminación.
-      if (row.driverId && row.noCounterpart && row.type === "ingreso") {
+      // Si este movimiento redujo la deuda de un domiciliario, hay que revertir esa
+      // deuda y limpiar los registros contables subsidiarios que se crearon junto a
+      // él — igual que hace edit-request.service.ts al aprobar una eliminación.
+      //
+      // La condición es debtApplied > 0, NO (noCounterpart && type=="ingreso"): esa
+      // heurística dejó pasar un egreso aplicado por error a una deuda, y al borrarlo
+      // la deuda nunca se restableció. Ver nota en schema.prisma.
+      if (row.driverId && row.debtApplied > 0) {
         // Revertir por POSICIÓN NETA (deuda − crédito): ver nota en
         // edit-request.service.ts. Restaura pendingDebt o creditAmount según
         // corresponda, sin dejar crédito por sobrepago fantasma.
         const drv = await tx.driver.findUnique({ where: { id: row.driverId } });
         if (drv) {
-          const net = (drv.pendingDebt - (drv.creditAmount ?? 0)) + row.amount;
+          const net = (drv.pendingDebt - (drv.creditAmount ?? 0)) + row.debtApplied;
           await tx.driver.update({
             where: { id: row.driverId },
             data: {

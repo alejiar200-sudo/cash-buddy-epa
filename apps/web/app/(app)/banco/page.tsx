@@ -263,7 +263,13 @@ export default function BancoPage() {
                         Registrar {m.type === "ingreso" ? "Salida" : "Ingreso"} de {formatCOP(m.amount)} para cuadrar
                       </button>
                     )}
-                    {m.source === "bank" && (
+                    {/* Solo un INGRESO SIN CONTRAPARTE puede descontarse de una deuda.
+                        Una salida es plata que sale (descontarla es al revés), y un
+                        movimiento con contraparte es plata de paso, no un pago del
+                        domiciliario. Mostrarlo en esos casos ya causó un error real:
+                        se aplicó una salida de $100.000 a la deuda de una domiciliaria.
+                        El backend (applyBankToDriver) rechaza ambos casos igual. */}
+                    {m.source === "bank" && m.type === "ingreso" && !m.pairId && (
                       <button
                         onClick={() => setApplyModal({ mov: m })}
                         className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-amber-500/20 text-amber-700 dark:text-amber-400 text-sm font-bold hover:bg-amber-500/30 transition border border-amber-500/30"

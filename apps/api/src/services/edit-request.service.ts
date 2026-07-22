@@ -2,6 +2,7 @@ import { prisma } from "../lib/prisma";
 import { notFound, badRequest } from "../lib/errors";
 import { toBogotaDateStr } from "../lib/date-range";
 import { BANK_LINKED_PAYMENT_NOTE, BANK_LINKED_BASE_PREFIX } from "../lib/balance-markers";
+import { applyDebtDelta } from "./driver.service";
 
 type ChangeMap = Record<string, { old: string; new: string }>;
 
@@ -124,17 +125,20 @@ async function deleteEntity(entityType: string, entityId: string) {
       const bankTx = await prisma.bankTransaction.findUnique({ where: { id: entityId } });
       if (!bankTx) break;
       await prisma.$transaction(async (tx) => {
-        // Si es un pago de domiciliario (noCounterpart + driverId), revertir deuda
-        // y limpiar los registros contables subsidiarios (BaseTransaction + DriverPayment
+        // Si este movimiento redujo la deuda de un domiciliario, revertirla y limpiar
+        // los registros contables subsidiarios (BaseTransaction + DriverPayment
         // bank-linked) que se crearon junto a este bankTransaction.
-        if (bankTx.driverId && bankTx.noCounterpart && bankTx.type === "ingreso") {
+        //
+        // La condición es debtApplied > 0, NO (noCounterpart && type=="ingreso"): ver
+        // nota en bank-transaction.service.ts::remove() y en schema.prisma.
+        if (bankTx.driverId && bankTx.debtApplied > 0) {
           // Revertir por POSICIÓN NETA (deuda − crédito): el ingreso redujo esa posición
           // en `amount`; al borrarlo se restaura y se re-normaliza en pendingDebt o
           // creditAmount. Antes solo se sumaba a pendingDebt y el crédito por sobrepago
           // quedaba como saldo fantasma ("la empresa le debe" que no desaparecía).
           const drv = await tx.driver.findUnique({ where: { id: bankTx.driverId } });
           if (drv) {
-            const net = (drv.pendingDebt - (drv.creditAmount ?? 0)) + bankTx.amount;
+            const net = (drv.pendingDebt - (drv.creditAmount ?? 0)) + bankTx.debtApplied;
             await tx.driver.update({
               where: { id: bankTx.driverId },
               data: {
@@ -185,13 +189,13 @@ async function deleteEntity(entityType: string, entityId: string) {
       const base = await prisma.baseTransaction.findUnique({ where: { id: entityId } });
       if (!base) return;
       await prisma.$transaction(async (tx) => {
-        // entrega subía deuda (al borrar baja), pago bajaba deuda (al borrar sube)
-        const sign = base.type === "entrega" ? -1 : 1;
-        await tx.driver.update({
-          where: { id: base.driverId },
-          data: { pendingDebt: { increment: sign * base.amount } },
-        });
+        // Netear contra el crédito (applyDebtDelta) en vez de un increment/decrement
+        // crudo: así borrar una base nunca deja pendingDebt negativo ni desincroniza el
+        // crédito (mismo criterio que base.service.ts). entrega subía deuda (al borrar
+        // baja), pago la bajaba (al borrar sube).
+        const delta = base.type === "entrega" ? -base.amount : base.amount;
         await tx.baseTransaction.delete({ where: { id: entityId } });
+        await applyDebtDelta(tx, base.driverId, delta);
       });
       break;
     }

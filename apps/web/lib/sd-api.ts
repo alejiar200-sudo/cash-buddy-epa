@@ -2,10 +2,10 @@
  * Cliente fetch para los endpoints Shipday del backend.
  */
 
-function getToken() {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem("cashbuddy.token");
-}
+// Se reusa el getToken de ./api a propósito: antes este archivo tenía su propia copia
+// leyendo localStorage, y al cambiar el almacenamiento del token en un solo lado las
+// dos mitades de la app habrían quedado con sesiones distintas.
+import { getToken, setToken } from "./api";
 
 async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = getToken();
@@ -17,6 +17,14 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
       ...(init.headers ?? {}),
     },
   });
+  // Sesión caída o token vencido: mandar al login, igual que hace ./api. Sin esto, la
+  // mitad Shipday de la app se quedaba mostrando errores sueltos con la sesión muerta.
+  if (res.status === 401 && typeof window !== "undefined") {
+    setToken(null);
+    if (!window.location.pathname.startsWith("/login")) {
+      window.location.href = "/login";
+    }
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error((err as { error?: string }).error ?? res.statusText);
@@ -763,6 +771,9 @@ export interface DaySummary {
 }
 /** Resumen detallado de un día (Historial): junta Caja, Banco, domiciliarios, bases y deudas. */
 export const getDaySummary = (date: string) => apiFetch<DaySummary>(`/days/${date}/summary`);
+/** Resúmenes de un rango de días (calendario/tabla del Historial), con saldos reales por día. */
+export const getDaySummaries = (from: string, to: string) =>
+  apiFetch<DaySummary[]>(`/days/summaries?from=${from}&to=${to}`);
 /** Día operativo actual: no avanza al siguiente hasta que se registre el Cierre del día. */
 export const getCurrentOperatingDate = () => apiFetch<{ date: string }>(`/shifts/current-date`);
 export const deleteShift = (id: string) => apiFetch<void>(`/shifts/${id}`, { method: "DELETE" });

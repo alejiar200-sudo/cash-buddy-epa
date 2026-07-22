@@ -72,6 +72,8 @@ apiRouter.delete("/workers/:id", requireAdmin, asyncHandler(workers.remove));
 
 // ─── Days / Arqueos ───────────────────────────────────────────────────────────
 apiRouter.get("/days", asyncHandler(days.list));
+// Literal antes que "/days/:date" para que no lo capture el parámetro :date.
+apiRouter.get("/days/summaries", asyncHandler(days.summaries));
 apiRouter.get("/days/:date/summary", asyncHandler(days.summary));
 apiRouter.get("/days/:date", asyncHandler(days.get));
 apiRouter.put("/days/:date/arqueo", validate(updateArqueoSchema), asyncHandler(days.updateArqueo));

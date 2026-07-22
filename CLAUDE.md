@@ -58,6 +58,24 @@ y el default de fecha en `BankTransactionWizard.tsx`).
   domiciliario. Invariante: nunca deben ser positivos los dos a la vez —
   `applyDebtDelta()` en `driver.service.ts` los netea. No los actualices a
   mano sin pasar por ahí (o por la lógica equivalente ya existente).
+  - **Nunca uses `pendingDebt: { increment/decrement }` crudo** para ajustar la
+    deuda al crear/editar/borrar una base o pago: eso ignora el crédito a favor
+    y no tiene tope inferior, así que puede dejar `pendingDebt` NEGATIVO. Un
+    `pendingDebt` negativo es un agujero silencioso: el domiciliario desaparece
+    tanto de "Deudas" (filtra `pendingDebt > 0`) como de la lista de créditos
+    (`pendingDebt = 0`), aunque en "Domiciliarios" su base siga pendiente. Bug
+    real (Andrés Durán, jul-2026): una base salía en Domiciliarios pero no en
+    Deudas; borrarla y re-crearla la "arregló sola" porque `giveBase` re-neteaba.
+    `removeBase`/`editBase` (base.service.ts) y el borrado de `BaseTransaction`
+    en `edit-request.service.ts` pasan por `applyDebtDelta` justamente por esto.
+  - **No existe un "recalcular deudas" masivo confiable por fórmula.** El saldo
+    correcto depende de TODA la semántica de `BankTransaction` (`debtApplied`,
+    egresos que pagan crédito, egresos con `debtApplied`, contrapartes, splits);
+    reconstruirlo con `comisión + bases − pagos` cuenta doble los registros
+    bank-linked y resucita créditos ya pagados. El script `scripts/recalc-debts.ts`
+    quedó obsoleto por esto y aborta a propósito — **no lo ejecutes**. La única
+    forma correcta de mantener el saldo es que cada escritura netee su delta con
+    `applyDebtDelta()`.
 
 ### Pagos vía banco a la deuda de un domiciliario (el punto más frágil)
 
@@ -77,10 +95,26 @@ interna, marcados con notas especiales (`BANK_LINKED_PAYMENT_NOTE`,
   estado de cuenta del domiciliario).
 - Al eliminar un `BankTransaction` (`bank-transaction.service.ts::remove()` o
   `edit-request.service.ts::deleteEntity("BankTransaction")`), el sistema
-  DEBE: revertir `pendingDebt` por el monto, y borrar los registros
-  vinculados por `bankTransactionId`. **Ambos lugares deben mantenerse
-  sincronizados** — si agregas una tercera forma de borrar un
+  DEBE: revertir la posición neta del domiciliario por **`debtApplied`**, y
+  borrar los registros vinculados por `bankTransactionId`. **Ambos lugares
+  deben mantenerse sincronizados** — si agregas una tercera forma de borrar un
   `BankTransaction`, replica esta misma lógica.
+- La condición para revertir es **`debtApplied > 0`**, NUNCA
+  `noCounterpart && type === "ingreso"`. Esa heurística vieja causó un bug
+  real (17-jul-2026): se aplicó por error una **salida** de $100.000 a la
+  deuda de una domiciliaria; al borrar el movimiento la guarda no se cumplió
+  (era `egreso`), la deuda nunca se restableció y quedó un `DriverPayment`
+  fantasma de $18.600 manteniéndola en cero.
+- `applyBankToDriver` **solo acepta ingresos sin contraparte** (`pairId` nulo).
+  Una salida es plata que sale (descontarla de una deuda es contabilidad al
+  revés) y un movimiento con contraparte es plata de paso, no un pago del
+  domiciliario. El botón "Descontar de deuda" en `banco/page.tsx` aplica el
+  mismo filtro, pero **la validación que manda es la del backend**.
+- Las FK `BaseTransaction.bankTransactionId` y `DriverPayment.bankTransactionId`
+  son `onDelete: Cascade`, **no `SetNull`**. Con `SetNull`, borrar el
+  `BankTransaction` dejaba esos registros vivos y sin enlace — pagos fantasma
+  imposibles de rastrear. Con `Cascade`, si alguna ruta olvida la limpieza
+  explícita, el descuadre es visible en vez de silencioso. No la cambies.
 
 ## Cierre de caja: "día operativo" ≠ fecha calendario
 
